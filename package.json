@@ -1,0 +1,16 @@
+{
+  "name": "cloudflare-failover-monitor",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "基于 Cloudflare Workers 的多站点、多节点可用性监控与 CNAME 自动故障切换",
+  "license": "MIT",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}

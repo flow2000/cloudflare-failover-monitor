@@ -1,0 +1,31 @@
+name = "cf-failover-monitor"
+main = "src/index.js"
+compatibility_date = "2025-10-01"
+
+# Cron 触发器：每分钟检测一次
+[triggers]
+crons = ["* * * * *"]
+
+# KV 命名空间：存储站点状态与检测历史
+# 创建命令：npx wrangler kv namespace create MONITOR_KV
+[[kv_namespaces]]
+binding = "MONITOR_KV"
+id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+
+[vars]
+# 站点配置（JSON 数组，需写成单行），字段说明见 README「配置说明」
+SITES_CONFIG = "[]"
+# 失败判定规则，逗号分隔，可选: 4xx / 5xx / error（网络错误与超时）
+FAIL_ON = "4xx,5xx,error"
+# 单次探测超时时间（毫秒）
+CHECK_TIMEOUT_MS = "8000"
+# 连续失败多少次后触发 CNAME 切换
+FAILURE_THRESHOLD = "2"
+# 每个站点保留的历史记录条数
+HISTORY_LIMIT = "50"
+# 面板访问口令（可选）。设置后访问面板需带 ?token=xxx
+# 建议改用 secret 注入：npx wrangler secret put DASH_TOKEN
+# DASH_TOKEN = ""
+
+# 敏感配置请使用 secret 注入，切勿写入本文件：
+#   npx wrangler secret put CF_API_TOKEN
