@@ -51,8 +51,8 @@
 ### 1. 克隆并安装
 
 ```bash
-git clone https://github.com/<your-name>/cloudflare-failover-monitor.git
-cd cloudflare-failover-monitor
+git clone https://github.com/flow2000/monitoring-web.git
+cd monitoring-web
 npm install
 ```
 
@@ -78,6 +78,21 @@ Cloudflare 控制台 → 右上角头像 → **My Profile → API Tokens → Cre
 ```bash
 npx wrangler secret put CF_API_TOKEN
 ```
+
+**验证 Token 是否可用**：
+
+```bash
+# 用户级 Token（My Profile 里创建的常规 Token）
+curl -H "Authorization: Bearer <Token>" https://api.cloudflare.com/client/v4/user/tokens/verify
+
+# 账户级 Token（cfat_ 前缀，Account API Tokens 里创建），需改用账户接口
+curl -H "Authorization: Bearer <Token>" https://api.cloudflare.com/client/v4/accounts/<ACCOUNT_ID>/tokens/verify
+
+# 验证 DNS 读取权限（应返回记录列表而非 403）
+curl -H "Authorization: Bearer <Token>" "https://api.cloudflare.com/client/v4/zones/<ZONE_ID>/dns_records?type=CNAME"
+```
+
+返回 `"status":"active"` 即有效。注意：`cfat_` 前缀的账户级 Token 调用 `/user/tokens/verify` 会返回 401，属于接口路径不对，并非 Token 失效。
 
 ### 4. 配置站点
 
@@ -175,6 +190,7 @@ https://cf-failover-monitor.<你的子域>.workers.dev
 
 ```bash
 # 创建 .dev.vars 存放本地 secret（已被 .gitignore 忽略）
+# 注意必须是 KEY=value 标准格式（冒号格式 wrangler 无法解析）
 echo "CF_API_TOKEN=你的Token" > .dev.vars
 
 npm run dev        # 本地运行（cron 可用 "curl http://localhost:8787/__scheduled?cron=*+*+*+*+*" 触发）
