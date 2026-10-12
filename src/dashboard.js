@@ -55,22 +55,21 @@ function statusText(lastCheck) {
     : `<span class="status down">异常</span>`;
 }
 
-// 网站图标：优先源站 /favicon.ico，加载失败回退为首字母圆形图标
+// 网站图标：优先 SITES_CONFIG 中的 icon，其次源站 /favicon.ico，失败回退首字母圆形图标
 function renderFavicon(site) {
-  const origin = siteOrigin(site.url);
+  const src = site.icon || (siteOrigin(site.url) ? siteOrigin(site.url) + "/favicon.ico" : "");
   const letter = esc(String(site.name || "?").trim().charAt(0).toUpperCase() || "?");
-  if (!origin) return `<span class="favicon noicon"><b>${letter}</b></span>`;
-  return `<span class="favicon"><img src="${esc(origin)}/favicon.ico" alt="" loading="lazy" onerror="this.remove();this.parentElement.classList.add('noicon')"><b>${letter}</b></span>`;
+  if (!src) return `<span class="favicon noicon"><b>${letter}</b></span>`;
+  return `<span class="favicon"><img src="${esc(src)}" alt="" loading="lazy" onerror="this.remove();this.parentElement.classList.add('noicon')"><b>${letter}</b></span>`;
 }
 
-// 时间线条：每根代表一次检测（左旧右新），tooltip 展示详情
+// 时间线条：每根代表一次检测（左旧右新），不足 30 根用灰色占位条补齐，tooltip 展示详情
 function renderTimeline(history) {
   if (!history || !history.length) {
-    return `<div class="timeline-empty">暂无检测数据，等待下一轮 Cron 触发</div>`;
+    return `<div class="timeline"><div class="no-data">暂无检测数据，等待下一轮 Cron 触发</div></div>`;
   }
-  const bars = history
-    .slice(0, 30)
-    .reverse()
+  const entries = history.slice(0, 30).reverse();
+  const bars = entries
     .map((h) => {
       const tip =
         `${fmtFull(h.ts)} | ` +
@@ -80,7 +79,21 @@ function renderTimeline(history) {
       return `<i class="${h.ok ? "up" : "down"}" title="${esc(tip)}"></i>`;
     })
     .join("");
-  return `<div class="timeline">${bars}</div>`;
+  const pad = '<i class="none"></i>'.repeat(Math.max(0, 30 - entries.length));
+  return `<div class="timeline">${pad}${bars}</div>`;
+}
+
+// 站点统计：可用率与平均延迟（基于展示的最近 30 次检测）
+function siteStats(history) {
+  const entries = (history || []).slice(0, 30);
+  if (!entries.length) return null;
+  const okCount = entries.filter((h) => h.ok).length;
+  const lat = entries.filter((h) => h.latencyMs != null);
+  return {
+    total: entries.length,
+    pct: ((okCount / entries.length) * 100).toFixed(1),
+    avgMs: lat.length ? Math.round(lat.reduce((a, h) => a + h.latencyMs, 0) / lat.length) : null,
+  };
 }
 
 function renderSite(site) {
@@ -88,10 +101,14 @@ function renderSite(site) {
   const lc = st.lastCheck || {};
   const proxiedText =
     st.proxied === true ? "橙云" : st.proxied === false ? "仅DNS" : "-";
-  const sub = [
+  const stats = siteStats(site.history);
+  const left = stats
+    ? `最近 ${stats.total} 次检测 · 可用率 ${stats.pct}%` +
+      (stats.avgMs != null ? ` · 平均延迟 ${stats.avgMs}ms` : "")
+    : "暂无检测数据";
+  const right = [
     `当前节点 ${st.currentTarget || "-"}`,
     `CF代理 ${proxiedText}`,
-    lc.latencyMs != null ? `延迟 ${lc.latencyMs}ms` : null,
     lc.ts ? `检测于 ${fmtTime(lc.ts)}` : null,
   ]
     .filter(Boolean)
@@ -106,7 +123,7 @@ function renderSite(site) {
       ${statusText(lc)}
     </div>
     ${renderTimeline(site.history)}
-    <div class="site-sub">${esc(sub)}</div>
+    <div class="summary"><span>${esc(left)}</span><span>${esc(right)}</span></div>
   </div>`;
 }
 
@@ -186,20 +203,30 @@ export function renderDashboard(data) {
   .site .status.unknow:before { content: "? "; }
 
   /* ===== 时间线条 ===== */
-  .timeline { display: flex; justify-content: space-between; margin: 20px 0 12px; }
+  .timeline { display: flex; justify-content: space-between; margin: 20px 0 14px; }
   .timeline i { border-radius: 4px; cursor: pointer; flex-grow: 1; height: 30px; margin: 0 1px; transition: transform .15s ease, opacity .15s ease; }
-  .timeline i:hover { opacity: .75; transform: scaleY(1.15); }
-  .timeline i.up { background: #3bd672; }
-  .timeline i.down { background: #de484a; }
-  .timeline-empty { color: #969ea8; font-size: 13px; margin: 20px 0 12px; }
-  .site-sub { color: #969ea8; font-size: 13px; }
+  .timeline i:hover { opacity: .6; transform: scaleY(1.15); }
+  .timeline i:first-child { margin-left: 0; }
+  .timeline i:last-child { margin-right: 0; }
+  .timeline i.up { background-color: #3bd672; }
+  .timeline i.down { background-color: #de484a; }
+  .timeline i.none { background-color: #e5e8eb; cursor: default; }
+  .timeline i.none:hover { opacity: 1; transform: none; }
+  .timeline .no-data { color: #9aa2af; font-size: 13px; padding: 20px 0; text-align: center; width: 100%; }
+  .summary { color: #9aa2af; display: flex; font-size: 13px; justify-content: space-between; line-height: 15px; }
 
-  footer { color: #969ea8; font-size: 13px; padding-bottom: 40px; text-align: center; }
-  footer a { color: #6b7280; }
+  #footer { color: #969ea8; font-size: 12px; line-height: 25px; padding-bottom: 30px; text-align: center; }
+  #footer a { color: #3bd672; font-weight: 700; }
   @media (max-width: 640px) {
+    #header { padding: 20px 0 120px; }
+    #uptime { margin-top: -50px; }
+    .site { margin: 0 15px; padding: 20px 0; }
+    .status-dot, .status-ring { height: 40px; width: 40px; }
+    .status-dot:before { height: 18px; width: 18px; }
     .status-title { font-size: 24px; }
-    .site { margin: 0 20px; }
-    .banner-info { gap: 14px; padding: 12px 16px; }
+    .banner-content { align-items: flex-start; flex-direction: column; margin-top: 30px; }
+    .banner-info { gap: 16px; justify-content: space-between; padding: 10px 16px; width: 100%; }
+    .summary { flex-direction: column; gap: 4px; }
   }
 </style>
 </head>
@@ -232,10 +259,10 @@ export function renderDashboard(data) {
 </header>
 <main class="container">
   <div id="uptime">
-    ${data.sites.map(renderSite).join("") || '<div class="site"><div class="timeline-empty">尚未配置站点，请在环境变量 SITES_CONFIG 中添加。</div></div>'}
+    ${data.sites.map(renderSite).join("") || '<div class="site"><div class="summary"><span>尚未配置站点，请在环境变量 SITES_CONFIG 中添加。</span></div></div>'}
   </div>
 </main>
-<footer>Powered by <a href="https://github.com/flow2000/cloudflare-failover-monitor" target="_blank" rel="noopener">cloudflare-failover-monitor</a> · Cloudflare Workers</footer>
+<footer id="footer">Powered by <a href="https://github.com/flow2000/cloudflare-failover-monitor" target="_blank" rel="noopener">cloudflare-failover-monitor</a> · Cloudflare Workers</footer>
 </body>
 </html>`;
 }

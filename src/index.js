@@ -48,6 +48,7 @@ async function collectStatus(env, cfg) {
     sites.push({
       name: s.name,
       url: s.url,
+      icon: s.icon || "",
       recordName: s.recordName,
       nodes: s.nodes || [],
       autoRecover: s.autoRecover !== false,

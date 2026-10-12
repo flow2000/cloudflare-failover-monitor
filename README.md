@@ -138,6 +138,7 @@ https://cf-failover-monitor.<你的子域>.workers.dev
 |---|---|---|
 | `name` | 是 | 站点名称（面板展示、KV 键名使用，需唯一） |
 | `url` | 是 | 监控探测地址，返回 4XX/5XX 即判定故障 |
+| `icon` | 否 | 面板展示的网站图标 URL；不填则自动尝试源站 `/favicon.ico`，加载失败回退为首字母图标 |
 | `zoneId` | 是 | 域名所在 Zone 的 ID（Cloudflare 控制台域名概览页右下角） |
 | `recordName` | 是 | 要切换的 CNAME 记录完整名称，如 `www.example.com` |
 | `nodes` | 是 | 节点数组，**第一个为主节点**，其余按顺序为备选 |
