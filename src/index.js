@@ -23,10 +23,6 @@ export default {
     if (url.pathname === "/api/status") {
       return Response.json(await collectStatus(env, cfg));
     }
-    if (url.pathname === "/api/run" && request.method === "POST") {
-      ctx.waitUntil(runChecks(env, cfg));
-      return Response.json({ ok: true, message: "已触发一次全量检测，请稍后刷新" });
-    }
     if (url.pathname === "/" || url.pathname === "/index.html") {
       const data = await collectStatus(env, cfg);
       return new Response(renderDashboard(data), {
