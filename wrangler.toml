@@ -14,7 +14,8 @@ id = "273e5197313f464d8135d1dd925a703a"
 
 [vars]
 # 站点配置（JSON 数组，需写成单行），字段说明见 README「配置说明」
-SITES_CONFIG = "[]"
+# 主节点为当前线上 CNAME 指向；如需自动故障切换，请在 nodes 中追加备用节点
+SITES_CONFIG = '[{"name":"bimg主站","url":"https://bimg.cc/","zoneId":"fdd7083ea4434bbcbe3d8df035dc6b83","recordName":"bimg.cc","nodes":[{"name":"Vercel","cname":"8cf1a1a716d4feea.vercel-dns-017.com"}]},{"name":"www.bimg.cc","url":"https://www.bimg.cc/","zoneId":"fdd7083ea4434bbcbe3d8df035dc6b83","recordName":"www.bimg.cc","nodes":[{"name":"Vercel","cname":"8cf1a1a716d4feea.vercel-dns-017.com"}]},{"name":"api.bimg.cc","url":"https://api.bimg.cc/","zoneId":"fdd7083ea4434bbcbe3d8df035dc6b83","recordName":"api.bimg.cc","nodes":[{"name":"Vercel","cname":"8deb952b01f38dfd.vercel-dns-017.com"}]},{"name":"aqcoder主站","url":"https://aqcoder.cn/","zoneId":"ac1c85b6ed4cb1df8d869a40fbb5dbcb","recordName":"aqcoder.cn","nodes":[{"name":"Netlify","cname":"aqcoder.netlify.app"}]},{"name":"blog.aqcoder.cn","url":"https://blog.aqcoder.cn/","zoneId":"ac1c85b6ed4cb1df8d869a40fbb5dbcb","recordName":"blog.aqcoder.cn","nodes":[{"name":"Vercel","cname":"a41a7463834f90f3.vercel-dns-017.com"}]}]'
 # 失败判定规则，逗号分隔，可选: 4xx / 5xx / error（网络错误与超时）
 FAIL_ON = "4xx,5xx,error"
 # 单次探测超时时间（毫秒）
