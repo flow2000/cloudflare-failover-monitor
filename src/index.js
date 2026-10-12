@@ -109,6 +109,7 @@ async function processSite(env, cfg, site) {
     ? normalizeTarget(record.content)
     : state.currentTarget || null;
   state.currentTarget = currentTarget;
+  if (record) state.proxied = record.proxied;
 
   // 3. 故障切换 / 恢复回切
   if (failed) {
@@ -174,9 +175,9 @@ async function doFailover(env, cfg, site, record, currentTarget, failOn) {
   if (!chosen) return { message: "所有备选节点均不健康，未执行切换" };
 
   try {
-    await updateCname(site.zoneId, record, chosen.cname, env.CF_API_TOKEN);
+    await updateCname(site.zoneId, record, chosen.cname, env.CF_API_TOKEN, site.proxied);
     return {
-      message: `故障切换: ${currentTarget || record.content} → ${normalizeTarget(chosen.cname)}（${chosen.name || chosen.cname}）`,
+      message: `故障切换: ${currentTarget || record.content} → ${normalizeTarget(chosen.cname)}（${chosen.name || chosen.cname}）${proxiedLabel(site)}`,
       newTarget: chosen.cname,
     };
   } catch (e) {
@@ -190,12 +191,19 @@ async function doRecover(env, cfg, site, record, currentTarget, primary, failOn)
   const r = await checkTarget(primary.checkUrl, cfg.timeoutMs);
   if (isFailure(r, failOn)) return null;
   try {
-    await updateCname(site.zoneId, record, primary.cname, env.CF_API_TOKEN);
+    await updateCname(site.zoneId, record, primary.cname, env.CF_API_TOKEN, site.proxied);
     return {
-      message: `回切主节点: ${currentTarget} → ${normalizeTarget(primary.cname)}`,
+      message: `回切主节点: ${currentTarget} → ${normalizeTarget(primary.cname)}${proxiedLabel(site)}`,
       newTarget: primary.cname,
     };
   } catch (e) {
     return { message: `回切失败: ${e.message}` };
   }
+}
+
+// 站点配置了 proxied 时在事件消息中标注代理状态
+function proxiedLabel(site) {
+  return typeof site.proxied === "boolean"
+    ? `，CF代理${site.proxied ? "开启(橙云)" : "关闭(仅DNS)"}`
+    : "";
 }

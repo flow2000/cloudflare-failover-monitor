@@ -24,8 +24,8 @@ export async function getCnameRecord(zoneId, recordName, token) {
   return Array.isArray(result) && result.length ? result[0] : null;
 }
 
-// 更新 CNAME 指向，保留原有 TTL 与代理（橙色云）状态
-export async function updateCname(zoneId, record, newTarget, token) {
+// 更新 CNAME 指向，保留原有 TTL；proxied 为布尔值时显式设置代理（橙云）状态，否则保持原状
+export async function updateCname(zoneId, record, newTarget, token, proxied) {
   return cfApi(`/zones/${zoneId}/dns_records/${record.id}`, token, {
     method: "PUT",
     body: JSON.stringify({
@@ -33,7 +33,7 @@ export async function updateCname(zoneId, record, newTarget, token) {
       name: record.name,
       content: newTarget,
       ttl: record.ttl,
-      proxied: record.proxied,
+      proxied: typeof proxied === "boolean" ? proxied : record.proxied,
     }),
   });
 }

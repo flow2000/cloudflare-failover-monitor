@@ -73,6 +73,7 @@ function renderSite(site) {
     ["监控地址", site.url],
     ["域名记录", site.recordName],
     ["当前 CNAME", st.currentTarget || "-"],
+    ["CF 代理", st.proxied === true ? "已开启（橙云）" : st.proxied === false ? "仅 DNS" : "-"],
     ["连续失败", String(st.consecutiveFailures || 0)],
     ["最近检测", fmtTime(lc.ts)],
     ["最近延迟", lc.latencyMs != null ? lc.latencyMs + " ms" : "-"],

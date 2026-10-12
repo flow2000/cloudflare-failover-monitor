@@ -144,6 +144,7 @@ https://cf-failover-monitor.<你的子域>.workers.dev
 | `nodes[].cname` | 是 | 该节点的 CNAME 目标，如 `origin-a.example.com` |
 | `nodes[].checkUrl` | 否 | 节点直连探测地址。配置后：切换前先验证该节点健康；主节点配置后才有自动回切能力 |
 | `autoRecover` | 否 | 主节点恢复后是否自动回切，默认 `true` |
+| `proxied` | 否 | 切换/回切时是否开启 Cloudflare 代理（橙云）：`true` / `false`；不填则保持记录当前代理状态不变 |
 | `failOn` | 否 | 站点级失败判定规则，覆盖全局 `FAIL_ON`，如 `["4xx","error"]` |
 
 ### 完整示例（2 个站点 × 多节点）
@@ -156,6 +157,7 @@ https://cf-failover-monitor.<你的子域>.workers.dev
     "zoneId": "abc123",
     "recordName": "www.example.com",
     "autoRecover": true,
+    "proxied": true,
     "nodes": [
       { "name": "香港主节点", "cname": "hk-origin.example.com", "checkUrl": "https://hk-origin.example.com/health" },
       { "name": "日本备用", "cname": "jp-origin.example.com", "checkUrl": "https://jp-origin.example.com/health" },
