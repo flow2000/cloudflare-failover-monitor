@@ -10,7 +10,7 @@ crons = ["* * * * *"]
 # 创建命令：npx wrangler kv namespace create MONITOR_KV
 [[kv_namespaces]]
 binding = "MONITOR_KV"
-id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+id = "273e5197313f464d8135d1dd925a703a"
 
 [vars]
 # 站点配置（JSON 数组，需写成单行），字段说明见 README「配置说明」

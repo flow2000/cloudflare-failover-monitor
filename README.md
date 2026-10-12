@@ -72,6 +72,7 @@ Cloudflare 控制台 → 右上角头像 → **My Profile → API Tokens → Cre
 |---|---|
 | `Zone - DNS - Edit` | 包含被监控域名的 Zone（或 All zones）|
 | `Zone - Zone - Read` | 同上 |
+| `Account - Workers KV Storage - Edit` | 本账号（用于读写监控状态与历史）|
 
 创建后注入为 secret（**不要写进 wrangler.toml**）：
 
