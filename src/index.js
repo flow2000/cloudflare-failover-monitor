@@ -39,24 +39,35 @@ export default {
 };
 
 // 聚合所有站点状态，供面板与 /api/status 使用
+// 单键存储：所有站点状态与历史合并在一个键，1 次读取代 站点数×2 次读
+const DATA_KEY = "mon:data";
+const CACHE_TTL_MS = 25000;
+// Worker 实例级内存缓存，面板访问基本不再消耗 KV 读
+let memCache = { ts: 0, data: null };
+
+async function loadData(kv) {
+  const data = (await kv.get(DATA_KEY, "json")) || {};
+  data.states ||= {};
+  data.histories ||= {};
+  return data;
+}
+
 async function collectStatus(env, cfg) {
-  const kv = env.MONITOR_KV;
-  const sites = [];
-  for (const s of cfg.sites) {
-    const state = (await kv.get(`state:${s.name}`, "json")) || {};
-    const history = (await kv.get(`history:${s.name}`, "json")) || [];
-    sites.push({
-      name: s.name,
-      url: s.url,
-      icon: s.icon || "",
-      recordName: s.recordName,
-      nodes: s.nodes || [],
-      autoRecover: s.autoRecover !== false,
-      state,
-      history,
-    });
+  const now = Date.now();
+  if (!memCache.data || now - memCache.ts > CACHE_TTL_MS) {
+    memCache = { ts: now, data: await loadData(env.MONITOR_KV) };
   }
-  return { generatedAt: Date.now(), sites };
+  const sites = cfg.sites.map((s) => ({
+    name: s.name,
+    url: s.url,
+    icon: s.icon || "",
+    recordName: s.recordName,
+    nodes: s.nodes || [],
+    autoRecover: s.autoRecover !== false,
+    state: memCache.data.states[s.name] || {},
+    history: memCache.data.histories[s.name] || [],
+  }));
+  return { generatedAt: memCache.ts, sites };
 }
 
 // 全量检测入口：Cron 与手动触发共用
@@ -64,22 +75,31 @@ async function runChecks(env, cfg) {
   if (!env.CF_API_TOKEN) {
     console.error("缺少 CF_API_TOKEN，将无法执行 DNS 切换");
   }
-  await Promise.all(
+  const kv = env.MONITOR_KV;
+  const data = await loadData(kv);
+  const results = await Promise.all(
     cfg.sites.map((site) =>
-      processSite(env, cfg, site).catch((e) =>
-        console.error(`站点 ${site.name} 检测异常:`, e)
-      )
+      processSite(env, cfg, site, data).catch((e) => {
+        console.error(`站点 ${site.name} 检测异常:`, e);
+        return false;
+      })
     )
   );
+  // 写入策略：有状态变化/事件立即写；否则每 5 分钟心跳写一次
+  // 免费套餐每天仅 1000 次写，逐分钟写入会超限
+  const changed = results.some(Boolean);
+  const now = Date.now();
+  if (changed || now - (data.lastWriteAt || 0) >= 300000) {
+    data.lastWriteAt = now;
+    await kv.put(DATA_KEY, JSON.stringify(data));
+  }
+  memCache = { ts: now, data };
 }
 
-// 单站点：探测 -> 判定 -> 切换/回切 -> 写入 KV
-async function processSite(env, cfg, site) {
-  const kv = env.MONITOR_KV;
-  const stateKey = `state:${site.name}`;
-  const histKey = `history:${site.name}`;
-  const state = (await kv.get(stateKey, "json")) || { consecutiveFailures: 0 };
-  const history = (await kv.get(histKey, "json")) || [];
+// 单站点：探测 -> 判定 -> 切换/回切 -> 更新内存数据；返回是否有状态变化
+async function processSite(env, cfg, site, data) {
+  const state = data.states[site.name] || { consecutiveFailures: 0 };
+  const history = data.histories[site.name] || [];
   const failOn = siteFailOn(site, cfg);
 
   // 1. 探测站点
@@ -132,7 +152,8 @@ async function processSite(env, cfg, site) {
     }
   }
 
-  // 4. 写入 KV（历史记录按上限截断）
+  // 4. 更新内存数据（历史记录按上限截断），由 runChecks 统一持久化
+  const statusChanged = state.lastCheck && state.lastCheck.ok !== entry.ok;
   history.unshift(entry);
   if (history.length > cfg.historyLimit) history.length = cfg.historyLimit;
   state.lastCheck = {
@@ -141,8 +162,9 @@ async function processSite(env, cfg, site) {
     status: entry.status,
     latencyMs: entry.latencyMs,
   };
-  await kv.put(stateKey, JSON.stringify(state));
-  await kv.put(histKey, JSON.stringify(history));
+  data.states[site.name] = state;
+  data.histories[site.name] = history;
+  return Boolean(statusChanged || entry.event);
 }
 
 // 选择下一个健康节点并切换 CNAME
