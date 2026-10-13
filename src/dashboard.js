@@ -110,10 +110,18 @@ function renderSite(site) {
     .filter(Boolean)
     .join(" · ");
 
+  const nodeNames = (site.nodes || []).map((n) => n.name).join(" / ") || "-";
+  const infoTip =
+    `<div class="tip-row"><span class="tip-label">监控地址</span><span class="tip-value">${esc(site.url)}</span></div>` +
+    `<div class="tip-row"><span class="tip-label">CNAME 记录</span><span class="tip-value">${esc(site.recordName)}</span></div>` +
+    `<div class="tip-row"><span class="tip-label">当前节点</span><span class="tip-value">${esc(st.currentTarget || "-")}</span></div>` +
+    `<div class="tip-row"><span class="tip-label">节点列表</span><span class="tip-value">${esc(nodeNames)}</span></div>`;
+
   return `<div class="site">
     <div class="meta">
       ${renderFavicon(site)}
       <span class="name">${esc(site.name)}</span>
+      <i class="info" data-tip="${esc(infoTip)}">i</i>
       <a class="link" href="${esc(site.url)}" target="_blank" rel="noopener" title="访问站点">↗</a>
       <span class="badge">${esc(site.recordName)}</span>
       ${statusText(lc)}
@@ -236,6 +244,8 @@ export function renderDashboard(data) {
   }
   .node-link { color: inherit; text-decoration: none; }
   .node-link:hover { color: #3bd672; }
+  .info { border: 1px solid #969ea8; border-radius: 50%; color: #969ea8; cursor: help; font-size: 10px; font-style: normal; height: 15px; line-height: 13px; text-align: center; width: 15px; }
+  .info:hover { border-color: #3bd672; color: #3bd672; }
 </style>
 </head>
 <body>
