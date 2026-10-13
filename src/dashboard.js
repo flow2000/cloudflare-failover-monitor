@@ -104,7 +104,7 @@ function renderSite(site) {
     ? `最近 ${stats.days} 天 · 可用率 ${stats.pct}%`
     : "暂无检测数据，等待积累";
   const right = [
-    `当前节点 <a class="node-link" href="${esc(site.url)}" target="_blank" rel="noopener">${esc(site.url)}</a>`,
+    `<a class="node-link" href="${esc(site.url)}" target="_blank" rel="noopener">${esc(site.url)}</a>`,
     lc.ts ? `检测于 ${fmtTime(lc.ts)}` : null,
   ]
     .filter(Boolean)
@@ -113,8 +113,8 @@ function renderSite(site) {
   const nodeNames = (site.nodes || []).map((n) => n.name).join(" / ") || "-";
   const infoTip =
     `<div class="tip-row"><span class="tip-label">监控地址</span><span class="tip-value">${esc(site.url)}</span></div>` +
-    `<div class="tip-row"><span class="tip-label">CNAME 记录</span><span class="tip-value">${esc(site.recordName)}</span></div>` +
-    `<div class="tip-row"><span class="tip-label">当前节点</span><span class="tip-value">${esc(st.currentTarget || "-")}</span></div>` +
+    `<div class="tip-row"><span class="tip-label">记录名</span><span class="tip-value">${esc(site.recordName)}</span></div>` +
+    `<div class="tip-row"><span class="tip-label">CNAME 目标</span><span class="tip-value">${esc(st.currentTarget || "-")}</span></div>` +
     `<div class="tip-row"><span class="tip-label">节点列表</span><span class="tip-value">${esc(nodeNames)}</span></div>`;
 
   return `<div class="site">
