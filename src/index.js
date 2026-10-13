@@ -38,25 +38,62 @@ export default {
   },
 };
 
-// 聚合所有站点状态，供面板与 /api/status 使用
-// 单键存储：所有站点状态与历史合并在一个键，1 次读取代 站点数×2 次读
-const DATA_KEY = "mon:data";
+// ===== D1 存储层 =====
+// state 表：每站点一行 JSON（连续失败计数、当前 CNAME、最近一次检测结果）
+// checks 表：每次检测一行明细（供 API 查询最近历史），保留 90 天
+// daily 表：按 UTC+8 日期桶聚合（供 90 天可用性视图），保留 90 天
+// D1 免费额度 10 万行写/天，每分钟 4 站点×3 张表≈1.7 万行/天，无需写入节流
+
 const CACHE_TTL_MS = 25000;
-// Worker 实例级内存缓存，面板访问基本不再消耗 KV 读
+// Worker 实例级内存缓存，面板访问基本不再消耗 D1 读
 let memCache = { ts: 0, data: null };
 
-async function loadData(kv) {
-  const data = (await kv.get(DATA_KEY, "json")) || {};
-  data.states ||= {};
-  data.histories ||= {};
-  data.daily ||= {};
-  return data;
+// UTC+8 日期桶键
+function dayStr(ts) {
+  return new Date(ts + 8 * 3600e3).toISOString().slice(0, 10);
 }
 
+// 一次性读出面板所需的全部数据（单批次往返）
+async function loadData(db, cfg) {
+  const cutoffDay = dayStr(Date.now() - 90 * 86400e3);
+  const stmts = [
+    db.prepare("SELECT site, json FROM state"),
+    db.prepare("SELECT site, day, ok, fail, events FROM daily WHERE day >= ?").bind(cutoffDay),
+    ...cfg.sites.map((s) =>
+      db
+        .prepare("SELECT ts, ok, status, latency_ms, event, error FROM checks WHERE site = ? ORDER BY ts DESC LIMIT ?")
+        .bind(s.name, cfg.historyLimit)
+    ),
+  ];
+  const [stateRes, dailyRes, ...histRes] = await db.batch(stmts);
+
+  const states = {};
+  for (const r of stateRes.results) {
+    if (r.site !== "__meta__") states[r.site] = JSON.parse(r.json);
+  }
+  const daily = {};
+  for (const r of dailyRes.results) {
+    const bucket = { ok: r.ok, fail: r.fail };
+    if (r.events) bucket.events = JSON.parse(r.events);
+    (daily[r.site] ||= {})[r.day] = bucket;
+  }
+  const histories = {};
+  cfg.sites.forEach((s, i) => {
+    histories[s.name] = histRes[i].results.map((r) => {
+      const e = { ts: r.ts, ok: !!r.ok, status: r.status ?? undefined, latencyMs: r.latency_ms ?? undefined };
+      if (r.event) e.event = r.event;
+      if (r.error) e.error = r.error;
+      return e;
+    });
+  });
+  return { states, histories, daily };
+}
+
+// 聚合所有站点状态，供面板与 /api/status 使用
 async function collectStatus(env, cfg) {
   const now = Date.now();
   if (!memCache.data || now - memCache.ts > CACHE_TTL_MS) {
-    memCache = { ts: now, data: await loadData(env.MONITOR_KV) };
+    memCache = { ts: now, data: await loadData(env.DB, cfg) };
   }
   const sites = cfg.sites.map((s) => ({
     name: s.name,
@@ -77,31 +114,42 @@ async function runChecks(env, cfg) {
   if (!env.CF_API_TOKEN) {
     console.error("缺少 CF_API_TOKEN，将无法执行 DNS 切换");
   }
-  const kv = env.MONITOR_KV;
-  const data = await loadData(kv);
-  const results = await Promise.all(
+  const db = env.DB;
+  // 读出全部站点状态（含连续失败计数）
+  const stateRes = await db.prepare("SELECT site, json FROM state").all();
+  const states = {};
+  for (const r of stateRes.results) {
+    if (r.site !== "__meta__") states[r.site] = JSON.parse(r.json);
+  }
+  await Promise.all(
     cfg.sites.map((site) =>
-      processSite(env, cfg, site, data).catch((e) => {
-        console.error(`站点 ${site.name} 检测异常:`, e);
-        return false;
-      })
+      processSite(env, cfg, site, db, states[site.name] || { consecutiveFailures: 0 }).catch((e) =>
+        console.error(`站点 ${site.name} 检测异常:`, e)
+      )
     )
   );
-  // 写入策略：有状态变化/事件立即写；否则每 5 分钟心跳写一次
-  // 免费套餐每天仅 1000 次写，逐分钟写入会超限
-  const changed = results.some(Boolean);
-  const now = Date.now();
-  if (changed || now - (data.lastWriteAt || 0) >= 300000) {
-    data.lastWriteAt = now;
-    await kv.put(DATA_KEY, JSON.stringify(data));
-  }
-  memCache = { ts: now, data };
+  memCache = { ts: 0, data: null }; // 检测后数据已变，使面板缓存失效
+  await cleanupOldData(db);
 }
 
-// 单站点：探测 -> 判定 -> 切换/回切 -> 更新内存数据；返回是否有状态变化
-async function processSite(env, cfg, site, data) {
-  const state = data.states[site.name] || { consecutiveFailures: 0 };
-  const history = data.histories[site.name] || [];
+// 每天（UTC+8）清理一次 90 天前的明细与聚合数据
+async function cleanupOldData(db) {
+  const today = dayStr(Date.now());
+  const meta = await db.prepare("SELECT json FROM state WHERE site = '__meta__'").first();
+  const m = meta ? JSON.parse(meta.json) : {};
+  if (m.lastCleanupDay === today) return;
+  m.lastCleanupDay = today;
+  await db.batch([
+    db.prepare("DELETE FROM checks WHERE ts < ?").bind(Date.now() - 90 * 86400e3),
+    db.prepare("DELETE FROM daily WHERE day < ?").bind(dayStr(Date.now() - 90 * 86400e3)),
+    db
+      .prepare("INSERT INTO state (site, json) VALUES ('__meta__', ?) ON CONFLICT(site) DO UPDATE SET json = excluded.json")
+      .bind(JSON.stringify(m)),
+  ]);
+}
+
+// 单站点：探测 -> 判定 -> 切换/回切 -> 写入 D1
+async function processSite(env, cfg, site, db, state) {
   const failOn = siteFailOn(site, cfg);
 
   // 1. 探测站点
@@ -154,33 +202,41 @@ async function processSite(env, cfg, site, data) {
     }
   }
 
-  // 4. 更新内存数据（历史记录按上限截断），由 runChecks 统一持久化
-  const statusChanged = state.lastCheck && state.lastCheck.ok !== entry.ok;
-  history.unshift(entry);
-  if (history.length > cfg.historyLimit) history.length = cfg.historyLimit;
+  // 4. 持久化：检测明细 + 站点状态 + 按日聚合
   state.lastCheck = {
     ts: entry.ts,
     ok: entry.ok,
     status: entry.status,
     latencyMs: entry.latencyMs,
   };
-  data.states[site.name] = state;
-  data.histories[site.name] = history;
+  const day = dayStr(entry.ts);
 
-  // 5. 按日聚合（UTC+8 日期桶），保留最近 90 天，供 90 天可用性视图
-  const day = new Date(entry.ts + 8 * 3600e3).toISOString().slice(0, 10);
-  const daily = (data.daily[site.name] ||= {});
-  const bucket = (daily[day] ||= { ok: 0, fail: 0 });
-  if (entry.ok) bucket.ok++;
-  else bucket.fail++;
+  // 有事件时先读出当天已有事件，合并后保留最近 3 条
+  let eventsJson = null;
   if (entry.event) {
-    bucket.events ||= [];
-    if (bucket.events.length < 3) bucket.events.push(entry.event);
+    const row = await db.prepare("SELECT events FROM daily WHERE site = ? AND day = ?").bind(site.name, day).first();
+    const events = row && row.events ? JSON.parse(row.events) : [];
+    events.push(entry.event);
+    eventsJson = JSON.stringify(events.slice(-3));
   }
-  const dayKeys = Object.keys(daily).sort();
-  while (dayKeys.length > 90) delete daily[dayKeys.shift()];
 
-  return Boolean(statusChanged || entry.event);
+  await db.batch([
+    db
+      .prepare("INSERT INTO checks (site, ts, ok, status, latency_ms, event, error) VALUES (?, ?, ?, ?, ?, ?, ?)")
+      .bind(site.name, entry.ts, entry.ok ? 1 : 0, entry.status ?? null, entry.latencyMs ?? null, entry.event || null, entry.error || null),
+    db
+      .prepare("INSERT INTO state (site, json) VALUES (?, ?) ON CONFLICT(site) DO UPDATE SET json = excluded.json")
+      .bind(site.name, JSON.stringify(state)),
+    db
+      .prepare(
+        `INSERT INTO daily (site, day, ok, fail, events) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(site, day) DO UPDATE SET
+           ok = daily.ok + excluded.ok,
+           fail = daily.fail + excluded.fail,
+           events = COALESCE(excluded.events, daily.events)`
+      )
+      .bind(site.name, day, entry.ok ? 1 : 0, entry.ok ? 0 : 1, eventsJson),
+  ]);
 }
 
 // 选择下一个健康节点并切换 CNAME

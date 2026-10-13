@@ -116,7 +116,7 @@ function renderSite(site) {
     <div class="meta">
       ${renderFavicon(site)}
       <span class="name">${esc(site.name)}</span>
-      <i class="info" data-tip="${esc(infoTip)}">i</i>
+      <i class="info" data-tip="${esc(infoTip)}" role="img" aria-label="站点详情">i</i>
       <a class="link" href="${esc(site.url)}" target="_blank" rel="noopener" title="访问站点">↗</a>
       <span class="badge">${esc(site.recordName)}</span>
       ${statusText(lc)}
@@ -137,6 +137,7 @@ export function renderDashboard(data) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="多站点可用性监控面板：每分钟自动检测，故障时自动切换 CNAME 至备用节点">
 <meta http-equiv="refresh" content="30">
 <title>站点监控</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2310b981'/%3E%3Cpath d='M10 36h12l6-16 8 28 6-12h12' stroke='%23ffffff' stroke-width='5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
@@ -258,7 +259,7 @@ export function renderDashboard(data) {
         <div class="info-item"><span class="info-label">正常</span><span class="info-value">${up}</span></div>
         <div class="info-item"><span class="info-label">异常</span><span class="info-value">${down}</span></div>
         <div class="info-item"><span class="info-label">更新于</span><span class="info-value">${fmtTime(data.generatedAt)}</span></div>
-        <button class="refresh-btn" onclick="location.reload()" title="刷新">⟳</button>
+        <button class="refresh-btn" onclick="location.reload()" title="刷新" aria-label="刷新页面">⟳</button>
       </div>
     </div>
   </div>

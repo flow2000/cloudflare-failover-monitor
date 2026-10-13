@@ -6,8 +6,15 @@ compatibility_date = "2025-10-01"
 [triggers]
 crons = ["* * * * *"]
 
-# KV 命名空间：存储站点状态与检测历史
-# 创建命令：npx wrangler kv namespace create MONITOR_KV
+# D1 数据库：存储站点状态、检测明细与按日聚合（免费 10 万行写/天，远高于 KV 的 1000 次写/天）
+# 创建命令：npx wrangler d1 create monitor-db
+# 建表语句见 schema.sql：npx wrangler d1 execute monitor-db --remote --file=schema.sql
+[[d1_databases]]
+binding = "DB"
+database_name = "monitor-db"
+database_id = "TODO_CREATE_D1"
+
+# KV 命名空间：旧版存储，迁移到 D1 后保留一个版本以便回退，下个版本删除
 [[kv_namespaces]]
 binding = "MONITOR_KV"
 id = "273e5197313f464d8135d1dd925a703a"
