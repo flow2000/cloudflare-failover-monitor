@@ -119,7 +119,7 @@ function renderSite(site) {
       ${statusText(lc)}
     </div>
     ${renderTimeline(site.daily)}
-    <div class="summary"><span>${esc(left)}</span><span>${esc(right)}</span></div>
+    <div class="summary"><span>${esc(left)}</span><span>${right}</span></div>
   </div>`;
 }
 
