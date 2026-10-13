@@ -103,12 +103,7 @@ function renderSite(site) {
   const left = stats
     ? `最近 ${stats.days} 天 · 可用率 ${stats.pct}%`
     : "暂无检测数据，等待积累";
-  const right = [
-    `<a class="node-link" href="${esc(site.url)}" target="_blank" rel="noopener">${esc(site.url)}</a>`,
-    lc.ts ? `检测于 ${fmtTime(lc.ts)}` : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+  const right = lc.ts ? `检测于 ${fmtTime(lc.ts)}` : "";
 
   const nodeNames = (site.nodes || []).map((n) => n.name).join(" / ") || "-";
   const infoTip =
@@ -242,8 +237,6 @@ export function renderDashboard(data) {
     .banner-info { gap: 16px; justify-content: space-between; padding: 10px 16px; width: 100%; }
     .summary { flex-direction: column; gap: 4px; }
   }
-  .node-link { color: inherit; text-decoration: none; }
-  .node-link:hover { color: #3bd672; }
   .info { border: 1px solid #969ea8; border-radius: 50%; color: #969ea8; cursor: help; font-size: 10px; font-style: normal; height: 15px; line-height: 13px; text-align: center; width: 15px; }
   .info:hover { border-color: #3bd672; color: #3bd672; }
 </style>
