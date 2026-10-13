@@ -60,7 +60,7 @@ function renderFavicon(site) {
   const src = site.icon || (siteOrigin(site.url) ? siteOrigin(site.url) + "/favicon.ico" : "");
   const letter = esc(String(site.name || "?").trim().charAt(0).toUpperCase() || "?");
   if (!src) return `<span class="favicon noicon"><b>${letter}</b></span>`;
-  return `<span class="favicon"><img src="${esc(src)}" alt="" loading="lazy" onerror="this.remove();this.parentElement.classList.add('noicon')"><b>${letter}</b></span>`;
+  return `<span class="favicon"><img src="${esc(src)}" alt="" loading="lazy" onerror="var p=this.parentElement;if(p){p.classList.add('noicon')}this.remove()"><b>${letter}</b></span>`;
 }
 
 // 时间线条：最近 90 天每日可用性（左旧右新），无数据的日期用灰色占位条
