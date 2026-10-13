@@ -163,11 +163,16 @@ async function processSite(env, cfg, site, db, state) {
   };
   if (result.error) entry.error = result.error;
 
-  // 2. 查询当前 CNAME 记录
+  // 2. 查询当前 CNAME 记录（handleWww 时同时查别名记录）
+  const { switchName, aliasName } = wwwPlan(site);
   let record = null;
+  let aliasRecord = null;
   if (env.CF_API_TOKEN) {
     try {
-      record = await getCnameRecord(site.zoneId, site.recordName, env.CF_API_TOKEN);
+      record = await getCnameRecord(site.zoneId, switchName, env.CF_API_TOKEN);
+      if (aliasName) {
+        aliasRecord = await getCnameRecord(site.zoneId, aliasName, env.CF_API_TOKEN);
+      }
     } catch (e) {
       entry.event = `DNS 查询失败: ${e.message}`;
     }
@@ -200,6 +205,12 @@ async function processSite(env, cfg, site, db, state) {
         }
       }
     }
+  }
+
+  // 3.5 www 联动：别名记录（@ 或 www）始终 CNAME 指向主记录
+  if (record && aliasRecord) {
+    const m = await alignAlias(env, site, aliasRecord, switchName);
+    if (m) entry.event = entry.event ? `${entry.event}；${m}` : m;
   }
 
   // 4. 持久化：检测明细 + 站点状态 + 按日聚合
@@ -292,9 +303,36 @@ async function doRecover(env, cfg, site, record, currentTarget, primary, failOn)
   }
 }
 
+// www 联动：别名记录偏离主记录时纠正（如 @ → www.bimg.cc）
+async function alignAlias(env, site, aliasRecord, switchName) {
+  if (normalizeTarget(aliasRecord.content) === normalizeTarget(switchName)) return null;
+  try {
+    await updateCname(site.zoneId, aliasRecord, switchName, env.CF_API_TOKEN, site.proxied);
+    return `www 联动: ${aliasRecord.name} → ${switchName}`;
+  } catch (e) {
+    return `www 联动失败: ${e.message}`;
+  }
+}
+
 // 站点配置了 proxied 时在事件消息中标注代理状态
 function proxiedLabel(site) {
   return typeof site.proxied === "boolean"
     ? `，CF代理${site.proxied ? "开启(橙云)" : "关闭(仅DNS)"}`
     : "";
+}
+
+// 是否根域记录（如 bimg.cc），仅根域支持 www 子域联动
+function isApexName(name) {
+  return String(name || "").trim().split(".").length === 2;
+}
+
+// 解析 www 联动配置：handleWww 开启后，切换目标写在「主记录」上，另一条记录 CNAME 指向主记录
+// wwwFirst（默认 true）：主记录为 www，@ 指向 www；false：主记录为 @，www 指向 @
+function wwwPlan(site) {
+  if (!site.handleWww || !isApexName(site.recordName)) {
+    return { switchName: site.recordName, aliasName: null };
+  }
+  return site.wwwFirst === false
+    ? { switchName: site.recordName, aliasName: "www." + site.recordName }
+    : { switchName: "www." + site.recordName, aliasName: site.recordName };
 }
