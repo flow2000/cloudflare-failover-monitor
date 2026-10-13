@@ -99,15 +99,12 @@ function siteStats(daily) {
 function renderSite(site) {
   const st = site.state || {};
   const lc = st.lastCheck || {};
-  const proxiedText =
-    st.proxied === true ? "橙云" : st.proxied === false ? "仅DNS" : "-";
   const stats = siteStats(site.daily);
   const left = stats
     ? `最近 ${stats.days} 天 · 可用率 ${stats.pct}%`
     : "暂无检测数据，等待积累";
   const right = [
-    `当前节点 ${st.currentTarget || "-"}`,
-    `CF代理 ${proxiedText}`,
+    `当前节点 <a class="node-link" href="${esc(site.url)}" target="_blank" rel="noopener">${esc(site.url)}</a>`,
     lc.ts ? `检测于 ${fmtTime(lc.ts)}` : null,
   ]
     .filter(Boolean)
@@ -237,6 +234,8 @@ export function renderDashboard(data) {
     .banner-info { gap: 16px; justify-content: space-between; padding: 10px 16px; width: 100%; }
     .summary { flex-direction: column; gap: 4px; }
   }
+  .node-link { color: inherit; text-decoration: none; }
+  .node-link:hover { color: #3bd672; }
 </style>
 </head>
 <body>
