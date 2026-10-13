@@ -116,10 +116,9 @@ function renderSite(site) {
     <div class="meta">
       ${renderFavicon(site)}
       <span class="name">${esc(site.name)}</span>
-      <i class="info" data-tip="${esc(infoTip)}" role="img" aria-label="站点详情">i</i>
       <a class="link" href="${esc(site.url)}" target="_blank" rel="noopener" title="访问站点">↗</a>
       <span class="badge">${esc(site.recordName)}</span>
-      <span class="badge">GET / 1m</span>
+      <span class="badge" data-tip="${esc(infoTip)}">GET / 1m</span>
       ${statusText(lc)}
     </div>
     ${renderTimeline(site.daily)}
@@ -196,6 +195,7 @@ export function renderDashboard(data) {
   .site .link { color: #131a26; font-size: 13px; margin-left: 8px; transition: color .15s ease; }
   .site .link:hover { color: #3bd672; }
   .site .badge { background: #f5f7fa; border-radius: 20px; color: #6b7280; font-family: SFMono-Regular, Consolas, monospace; font-size: 12px; font-weight: 500; margin-left: 10px; padding: 3px 10px; }
+  .site .badge[data-tip] { cursor: help; }
   .site .status { font-weight: 500; margin-left: auto; padding-left: 20px; }
   .site .status.ok { color: #3bd672; }
   .site .status.down { color: #de484a; }
@@ -239,8 +239,6 @@ export function renderDashboard(data) {
     .banner-info { gap: 16px; justify-content: space-between; padding: 10px 16px; width: 100%; }
     .summary { flex-direction: column; gap: 4px; }
   }
-  .info { border: 1px solid #969ea8; border-radius: 50%; color: #969ea8; cursor: help; font-size: 10px; font-style: normal; height: 15px; line-height: 13px; text-align: center; width: 15px; }
-  .info:hover { border-color: #3bd672; color: #3bd672; }
 </style>
 </head>
 <body>
@@ -281,7 +279,7 @@ export function renderDashboard(data) {
 (function () {
   var tip = document.getElementById("tip");
   document.addEventListener("mouseover", function (e) {
-    var el = e.target && e.target.closest ? e.target.closest("i[data-tip]") : null;
+    var el = e.target && e.target.closest ? e.target.closest("[data-tip]") : null;
     if (!el) { tip.style.display = "none"; return; }
     tip.innerHTML = el.getAttribute("data-tip");
     tip.style.display = "block";
@@ -293,7 +291,7 @@ export function renderDashboard(data) {
     tip.style.left = Math.max(window.scrollX + 8, Math.min(left, maxLeft)) + "px";
   });
   document.addEventListener("mouseout", function (e) {
-    if (e.target && e.target.closest && e.target.closest("i[data-tip]")) {
+    if (e.target && e.target.closest && e.target.closest("[data-tip]")) {
       tip.style.display = "none";
     }
   });
