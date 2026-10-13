@@ -71,12 +71,13 @@ function renderTimeline(history) {
   const entries = history.slice(0, 30).reverse();
   const bars = entries
     .map((h) => {
+      // 结构化悬浮提示内容（转义后放入 data-tip，由前端 JS 渲染为深色气泡）
       const tip =
-        `${fmtFull(h.ts)} | ` +
-        (h.status ? `HTTP ${h.status}` : h.error || "错误") +
-        ` | ${h.latencyMs != null ? h.latencyMs + "ms" : "-"}` +
-        (h.event ? ` | ${h.event}` : "");
-      return `<i class="${h.ok ? "up" : "down"}" title="${esc(tip)}"></i>`;
+        `<div class="tip-row"><span class="tip-label">时间</span><span class="tip-value">${fmtFull(h.ts)}</span></div>` +
+        `<div class="tip-row"><span class="tip-label">状态</span><span class="tip-value" style="color:${h.ok ? "#3bd672" : "#de484a"}">${h.status ? "HTTP " + h.status : esc(h.error || "错误")} · ${h.ok ? "正常" : "异常"}</span></div>` +
+        `<div class="tip-row"><span class="tip-label">延迟</span><span class="tip-value">${h.latencyMs != null ? h.latencyMs + "ms" : "-"}</span></div>` +
+        (h.event ? `<div class="tip-desc">${esc(h.event)}</div>` : "");
+      return `<i class="${h.ok ? "up" : "down"}" data-tip="${esc(tip)}"></i>`;
     })
     .join("");
   const pad = '<i class="none"></i>'.repeat(Math.max(0, 30 - entries.length));
@@ -215,6 +216,15 @@ export function renderDashboard(data) {
   .timeline .no-data { color: #9aa2af; font-size: 13px; padding: 20px 0; text-align: center; width: 100%; }
   .summary { color: #9aa2af; display: flex; font-size: 13px; justify-content: space-between; line-height: 15px; }
 
+  /* ===== 悬浮提示气泡（仿参考站 tippy 深色样式） ===== */
+  #tip { background: rgba(17,24,39,.95); border-radius: 5px; box-shadow: 0 4px 14px rgba(0,0,0,.25); display: none; max-width: 280px; padding: 10px 12px; pointer-events: none; position: absolute; z-index: 999; }
+  #tip:after { border: 5px solid transparent; border-top-color: rgba(17,24,39,.95); content: ""; left: 50%; position: absolute; top: 100%; transform: translateX(-50%); }
+  #tip .tip-row { align-items: center; display: flex; font-size: 12px; gap: 16px; justify-content: space-between; padding: 4px 0; }
+  #tip .tip-row:not(:last-child) { border-bottom: 1px solid hsla(0,0%,100%,.1); }
+  #tip .tip-label { color: #9ca3af; }
+  #tip .tip-value { color: #fff; font-weight: 500; }
+  #tip .tip-desc { border-top: 1px solid hsla(0,0%,100%,.1); color: #d1d5db; font-size: 12px; line-height: 1.5; padding: 8px 0 4px; }
+
   #footer { color: #969ea8; font-size: 12px; line-height: 25px; padding-bottom: 30px; text-align: center; }
   #footer a { color: #3bd672; font-weight: 700; }
   @media (max-width: 640px) {
@@ -263,6 +273,29 @@ export function renderDashboard(data) {
   </div>
 </main>
 <footer id="footer">Powered by <a href="https://github.com/flow2000/cloudflare-failover-monitor" target="_blank" rel="noopener">cloudflare-failover-monitor</a> · Cloudflare Workers</footer>
+<div id="tip"></div>
+<script>
+(function () {
+  var tip = document.getElementById("tip");
+  document.addEventListener("mouseover", function (e) {
+    var el = e.target && e.target.closest ? e.target.closest("i[data-tip]") : null;
+    if (!el) { tip.style.display = "none"; return; }
+    tip.innerHTML = el.getAttribute("data-tip");
+    tip.style.display = "block";
+    var r = el.getBoundingClientRect();
+    var top = r.top + window.scrollY - tip.offsetHeight - 8;
+    var left = r.left + window.scrollX + r.width / 2 - tip.offsetWidth / 2;
+    var maxLeft = window.scrollX + document.documentElement.clientWidth - tip.offsetWidth - 8;
+    tip.style.top = Math.max(window.scrollY + 8, top) + "px";
+    tip.style.left = Math.max(window.scrollX + 8, Math.min(left, maxLeft)) + "px";
+  });
+  document.addEventListener("mouseout", function (e) {
+    if (e.target && e.target.closest && e.target.closest("i[data-tip]")) {
+      tip.style.display = "none";
+    }
+  });
+})();
+</script>
 </body>
 </html>`;
 }
