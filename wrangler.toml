@@ -12,7 +12,7 @@ crons = ["* * * * *"]
 [[d1_databases]]
 binding = "DB"
 database_name = "monitor-db"
-database_id = "TODO_CREATE_D1"
+database_id = "a11ca18b-7902-412e-838b-79a8b86ff511"
 
 # KV 命名空间：旧版存储，迁移到 D1 后保留一个版本以便回退，下个版本删除
 [[kv_namespaces]]
