@@ -119,6 +119,7 @@ function renderSite(site) {
       <i class="info" data-tip="${esc(infoTip)}" role="img" aria-label="站点详情">i</i>
       <a class="link" href="${esc(site.url)}" target="_blank" rel="noopener" title="访问站点">↗</a>
       <span class="badge">${esc(site.recordName)}</span>
+      <span class="badge">GET / 1m</span>
       ${statusText(lc)}
     </div>
     ${renderTimeline(site.daily)}
@@ -192,8 +193,8 @@ export function renderDashboard(data) {
   .favicon.noicon { background: linear-gradient(135deg, #6366f1, #4f46e5); }
   .favicon.noicon b { color: #fff; display: flex; font-size: 12px; font-weight: 700; }
   .site .name { font-size: 16px; font-weight: 500; }
-  .site .link { color: #8492a6; font-size: 13px; margin-left: 8px; opacity: .6; transition: opacity .15s ease; }
-  .site .link:hover { opacity: 1; }
+  .site .link { color: #131a26; font-size: 13px; margin-left: 8px; transition: color .15s ease; }
+  .site .link:hover { color: #3bd672; }
   .site .badge { background: #f5f7fa; border-radius: 20px; color: #6b7280; font-family: SFMono-Regular, Consolas, monospace; font-size: 12px; font-weight: 500; margin-left: 10px; padding: 3px 10px; }
   .site .status { font-weight: 500; margin-left: auto; padding-left: 20px; }
   .site .status.ok { color: #3bd672; }
