@@ -63,38 +63,37 @@ function renderFavicon(site) {
   return `<span class="favicon"><img src="${esc(src)}" alt="" loading="lazy" onerror="this.remove();this.parentElement.classList.add('noicon')"><b>${letter}</b></span>`;
 }
 
-// 时间线条：每根代表一次检测（左旧右新），不足 30 根用灰色占位条补齐，tooltip 展示详情
-function renderTimeline(history) {
-  if (!history || !history.length) {
-    return `<div class="timeline"><div class="no-data">暂无检测数据，等待下一轮 Cron 触发</div></div>`;
+// 时间线条：最近 90 天每日可用性（左旧右新），无数据的日期用灰色占位条
+function renderTimeline(daily) {
+  const days = [];
+  const base = Date.now() + 8 * 3600e3; // UTC+8
+  for (let i = 89; i >= 0; i--) {
+    days.push(new Date(base - i * 86400e3).toISOString().slice(0, 10));
   }
-  const entries = history.slice(0, 30).reverse();
-  const bars = entries
-    .map((h) => {
-      // 结构化悬浮提示内容（转义后放入 data-tip，由前端 JS 渲染为深色气泡）
+  const bars = days
+    .map((d) => {
+      const b = (daily || {})[d];
+      if (!b || !(b.ok + b.fail)) return `<i class="none"></i>`;
+      const total = b.ok + b.fail;
+      const pct = ((b.ok / total) * 100).toFixed(1);
       const tip =
-        `<div class="tip-row"><span class="tip-label">时间</span><span class="tip-value">${fmtFull(h.ts)}</span></div>` +
-        `<div class="tip-row"><span class="tip-label">状态</span><span class="tip-value" style="color:${h.ok ? "#3bd672" : "#de484a"}">${h.status ? "HTTP " + h.status : esc(h.error || "错误")} · ${h.ok ? "正常" : "异常"}</span></div>` +
-        `<div class="tip-row"><span class="tip-label">延迟</span><span class="tip-value">${h.latencyMs != null ? h.latencyMs + "ms" : "-"}</span></div>` +
-        (h.event ? `<div class="tip-desc">${esc(h.event)}</div>` : "");
-      return `<i class="${h.ok ? "up" : "down"}" data-tip="${esc(tip)}"></i>`;
+        `<div class="tip-row"><span class="tip-label">日期</span><span class="tip-value">${d}</span></div>` +
+        `<div class="tip-row"><span class="tip-label">可用率</span><span class="tip-value" style="color:${b.fail ? "#de484a" : "#3bd672"}">${pct}%</span></div>` +
+        `<div class="tip-row"><span class="tip-label">检测</span><span class="tip-value">正常 ${b.ok} · 异常 ${b.fail}</span></div>` +
+        ((b.events || []).map((e) => `<div class="tip-desc">${esc(e)}</div>`).join(""));
+      return `<i class="${b.fail ? "down" : "up"}" data-tip="${esc(tip)}"></i>`;
     })
     .join("");
-  const pad = '<i class="none"></i>'.repeat(Math.max(0, 30 - entries.length));
-  return `<div class="timeline">${pad}${bars}</div>`;
+  return `<div class="timeline">${bars}</div>`;
 }
 
-// 站点统计：可用率与平均延迟（基于展示的最近 30 次检测）
-function siteStats(history) {
-  const entries = (history || []).slice(0, 30);
-  if (!entries.length) return null;
-  const okCount = entries.filter((h) => h.ok).length;
-  const lat = entries.filter((h) => h.latencyMs != null);
-  return {
-    total: entries.length,
-    pct: ((okCount / entries.length) * 100).toFixed(1),
-    avgMs: lat.length ? Math.round(lat.reduce((a, h) => a + h.latencyMs, 0) / lat.length) : null,
-  };
+// 站点统计：最近 90 天可用率（基于按日聚合数据）
+function siteStats(daily) {
+  const buckets = Object.values(daily || {});
+  const ok = buckets.reduce((a, b) => a + (b.ok || 0), 0);
+  const fail = buckets.reduce((a, b) => a + (b.fail || 0), 0);
+  if (!ok && !fail) return null;
+  return { days: buckets.length, pct: ((ok / (ok + fail)) * 100).toFixed(2) };
 }
 
 function renderSite(site) {
@@ -102,11 +101,10 @@ function renderSite(site) {
   const lc = st.lastCheck || {};
   const proxiedText =
     st.proxied === true ? "橙云" : st.proxied === false ? "仅DNS" : "-";
-  const stats = siteStats(site.history);
+  const stats = siteStats(site.daily);
   const left = stats
-    ? `最近 ${stats.total} 次检测 · 可用率 ${stats.pct}%` +
-      (stats.avgMs != null ? ` · 平均延迟 ${stats.avgMs}ms` : "")
-    : "暂无检测数据";
+    ? `最近 ${stats.days} 天 · 可用率 ${stats.pct}%`
+    : "暂无检测数据，等待积累";
   const right = [
     `当前节点 ${st.currentTarget || "-"}`,
     `CF代理 ${proxiedText}`,
@@ -123,7 +121,7 @@ function renderSite(site) {
       <span class="badge">${esc(site.recordName)}</span>
       ${statusText(lc)}
     </div>
-    ${renderTimeline(site.history)}
+    ${renderTimeline(site.daily)}
     <div class="summary"><span>${esc(left)}</span><span>${esc(right)}</span></div>
   </div>`;
 }

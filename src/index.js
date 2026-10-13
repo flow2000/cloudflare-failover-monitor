@@ -49,6 +49,7 @@ async function loadData(kv) {
   const data = (await kv.get(DATA_KEY, "json")) || {};
   data.states ||= {};
   data.histories ||= {};
+  data.daily ||= {};
   return data;
 }
 
@@ -66,6 +67,7 @@ async function collectStatus(env, cfg) {
     autoRecover: s.autoRecover !== false,
     state: memCache.data.states[s.name] || {},
     history: memCache.data.histories[s.name] || [],
+    daily: memCache.data.daily[s.name] || {},
   }));
   return { generatedAt: memCache.ts, sites };
 }
@@ -164,6 +166,20 @@ async function processSite(env, cfg, site, data) {
   };
   data.states[site.name] = state;
   data.histories[site.name] = history;
+
+  // 5. 按日聚合（UTC+8 日期桶），保留最近 90 天，供 90 天可用性视图
+  const day = new Date(entry.ts + 8 * 3600e3).toISOString().slice(0, 10);
+  const daily = (data.daily[site.name] ||= {});
+  const bucket = (daily[day] ||= { ok: 0, fail: 0 });
+  if (entry.ok) bucket.ok++;
+  else bucket.fail++;
+  if (entry.event) {
+    bucket.events ||= [];
+    if (bucket.events.length < 3) bucket.events.push(entry.event);
+  }
+  const dayKeys = Object.keys(daily).sort();
+  while (dayKeys.length > 90) delete daily[dayKeys.shift()];
+
   return Boolean(statusChanged || entry.event);
 }
 
