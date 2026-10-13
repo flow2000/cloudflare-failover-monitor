@@ -141,6 +141,7 @@ export function renderDashboard(data) {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="refresh" content="30">
 <title>站点监控</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2310b981'/%3E%3Cpath d='M10 36h12l6-16 8 28 6-12h12' stroke='%23ffffff' stroke-width='5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 <style>
   * { box-sizing: border-box; margin: 0; }
   body { background-color: #f0f2f5; color: #131a26; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Microsoft YaHei", sans-serif; font-size: 14px; line-height: 1.5; }
