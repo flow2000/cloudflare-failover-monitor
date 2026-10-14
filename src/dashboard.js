@@ -116,8 +116,7 @@ function renderSite(site) {
     <div class="meta">
       ${renderFavicon(site)}
       <span class="name">${esc(site.name)}</span>
-      <a class="link" href="${esc(site.url)}" target="_blank" rel="noopener" title="访问站点">↗</a>
-      <span class="badge">${esc(site.recordName)}</span>
+      <a class="badge" href="https://${esc(site.recordName)}" target="_blank" rel="noopener" title="访问站点">${esc(site.recordName)}</a>
       <span class="badge" data-tip="${esc(infoTip)}">GET / 1m</span>
       ${statusText(lc)}
     </div>
@@ -192,8 +191,6 @@ export function renderDashboard(data) {
   .favicon.noicon { background: linear-gradient(135deg, #6366f1, #4f46e5); }
   .favicon.noicon b { color: #fff; display: flex; font-size: 12px; font-weight: 700; }
   .site .name { font-size: 16px; font-weight: 500; }
-  .site .link { color: #131a26; font-size: 13px; margin-left: 8px; transition: color .15s ease; }
-  .site .link:hover { color: #3bd672; }
   .site .badge { background: #f5f7fa; border-radius: 20px; color: #6b7280; font-family: SFMono-Regular, Consolas, monospace; font-size: 12px; font-weight: 500; margin-left: 10px; padding: 3px 10px; }
   .site .badge[data-tip] { cursor: help; }
   .site .status { font-weight: 500; margin-left: auto; padding-left: 20px; }
