@@ -148,12 +148,30 @@ async function cleanupOldData(db) {
   ]);
 }
 
+// 查询主记录与别名记录（handleWww 时两条并行）；失败不中断流程，错误通过 error 传递
+async function lookupCnameRecords(env, site, switchName, aliasName) {
+  if (!env.CF_API_TOKEN) return { record: null, aliasRecord: null };
+  try {
+    const [record, aliasRecord] = await Promise.all([
+      getCnameRecord(site.zoneId, switchName, env.CF_API_TOKEN),
+      aliasName ? getCnameRecord(site.zoneId, aliasName, env.CF_API_TOKEN) : null,
+    ]);
+    return { record, aliasRecord };
+  } catch (e) {
+    return { record: null, aliasRecord: null, error: e };
+  }
+}
+
 // 单站点：探测 -> 判定 -> 切换/回切 -> 写入 D1
 async function processSite(env, cfg, site, db, state) {
   const failOn = siteFailOn(site, cfg);
+  const { switchName, aliasName } = wwwPlan(site);
 
-  // 1. 探测站点
-  const result = await checkTarget(site.url, cfg.timeoutMs);
+  // 1+2. 并行执行：站点探测与 DNS 记录查询互不依赖
+  const [result, dns] = await Promise.all([
+    checkTarget(site.url, cfg.timeoutMs),
+    lookupCnameRecords(env, site, switchName, aliasName),
+  ]);
   const failed = isFailure(result, failOn);
   const entry = {
     ts: Date.now(),
@@ -162,21 +180,8 @@ async function processSite(env, cfg, site, db, state) {
     latencyMs: result.latencyMs,
   };
   if (result.error) entry.error = result.error;
-
-  // 2. 查询当前 CNAME 记录（handleWww 时同时查别名记录）
-  const { switchName, aliasName } = wwwPlan(site);
-  let record = null;
-  let aliasRecord = null;
-  if (env.CF_API_TOKEN) {
-    try {
-      record = await getCnameRecord(site.zoneId, switchName, env.CF_API_TOKEN);
-      if (aliasName) {
-        aliasRecord = await getCnameRecord(site.zoneId, aliasName, env.CF_API_TOKEN);
-      }
-    } catch (e) {
-      entry.event = `DNS 查询失败: ${e.message}`;
-    }
-  }
+  if (dns.error) entry.event = `DNS 查询失败: ${dns.error.message}`;
+  const { record, aliasRecord } = dns;
   const currentTarget = record
     ? normalizeTarget(record.content)
     : state.currentTarget || null;
@@ -259,21 +264,21 @@ async function doFailover(env, cfg, site, record, currentTarget, failOn) {
     return { message: "探测失败，但没有可切换的备选节点" };
   }
 
+  // 并行探测所有配置了 checkUrl 的候选节点（直到第一个未配置 checkUrl 的节点为止），再按优先级选第一个健康者
+  const firstDirect = candidates.findIndex((n) => !n.checkUrl);
+  const toCheck = firstDirect === -1 ? candidates : candidates.slice(0, firstDirect);
+  const results = await Promise.all(
+    toCheck.map((n) => checkTarget(n.checkUrl, cfg.timeoutMs))
+  );
   let chosen = null;
-  for (const node of candidates) {
-    if (node.checkUrl) {
-      // 配置了直连探测地址的节点：先验证健康再切换
-      const r = await checkTarget(node.checkUrl, cfg.timeoutMs);
-      if (!isFailure(r, failOn)) {
-        chosen = node;
-        break;
-      }
-    } else {
-      // 未配置 checkUrl 的节点按优先级顺序直接选用
-      chosen = node;
+  for (let i = 0; i < results.length; i++) {
+    if (!isFailure(results[i], failOn)) {
+      chosen = toCheck[i];
       break;
     }
   }
+  // 未配置 checkUrl 的节点不做健康验证，前面节点全不健康时按优先级直接选用
+  if (!chosen && firstDirect !== -1) chosen = candidates[firstDirect];
   if (!chosen) return { message: "所有备选节点均不健康，未执行切换" };
 
   try {
