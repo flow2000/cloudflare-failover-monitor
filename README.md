@@ -3,234 +3,278 @@
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
 ![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-F38020?logo=cloudflare&logoColor=white)
 
-基于 **Cloudflare Workers** 的多站点、多节点可用性监控与自动故障切换系统，零服务器、零成本（免费套餐额度内）运行。
+一个跑在 **Cloudflare Workers** 上的网站监控 + 自动故障切换工具。**不要钱、不要服务器**，部署一次，以后它 7×24 帮你盯着网站。
 
-当监控到网站无法访问（返回 **4XX/5XX** 或超时）时，自动调用 Cloudflare API 将域名的 **CNAME 记录切换到备用节点**；主节点恢复后自动回切。内置可视化 Web 面板，随时查看监控详情。
+## 它是干嘛的？（人话版）
 
-## 功能特性
+假设你的网站部署在 Vercel，同时备了一份在 Netlify。某天 Vercel 额度用完/宕机，网站打不开了——
 
-- **多站点**：一个 Worker 同时监控任意多个网站，互不影响
-- **多节点**：每个站点支持 1 个主节点 + 任意多个备用节点，按优先级切换，切换前先验证节点健康度
-- **自动切换**：连续失败达到阈值后，通过 Cloudflare API 自动修改 CNAME 指向健康节点
-- **自动回切**：主节点恢复健康后自动切回（可开关）
-- **可视化面板**：内置 Web Dashboard，90 天可用性时间条、切换事件、当前节点一目了然，30 秒自动刷新
-- **D1 数据库存储**：检测明细、站点状态、按日聚合全部落盘 Cloudflare D1（SQLite），免费 10 万行写/天，历史数据不怕丢
-- **环境变量驱动**：所有配置（站点、节点、阈值、超时等）均通过环境变量注入，零改码部署
-- **JSON API**：`/api/status` 输出全部监控数据，方便接入第三方告警
+**没有这个工具时**：用户发现打不开 → 找你 → 你睡眼惺忪爬起来登录 Cloudflare 改 DNS → 等生效 → 网站恢复。全程可能几小时。
 
-## 工作原理
+**有了它之后**：
+
+1. 它**每分钟**访问一次你的网站；
+2. 发现**连续 2 次打不开**（约 2 分钟），自动把域名的 CNAME 记录从 Vercel 改到 Netlify；
+3. 网站自动恢复，你在面板上能看到一条「故障切换」记录；
+4. 等 Vercel 恢复正常后，它再**自动切回去**。
+
+你什么都不用做。面板长这样：
 
 ```
-┌─────────────┐   Cron（每分钟）   ┌──────────────────────────┐
-│  Cloudflare │ ───────────────▶ │  Worker: runChecks        │
-│   Cron      │                   │  1. 探测所有站点 URL        │
-└─────────────┘                   │  2. 4XX/5XX/超时 → 记失败   │
-                                  │  3. 连续失败 ≥ 阈值          │
-                                  └───────────┬──────────────┘
-                                              │
-                          ┌───────────────────▼───────────────┐
-                          │  选择健康备用节点（验证 checkUrl）   │
-                          │  Cloudflare API 更新 CNAME 记录     │
-                          └───────────────────┬───────────────┘
-                                              │
-                                  ┌───────────▼──────────────┐
-                                  │  明细/状态/聚合写入 D1      │
-                                  │  Dashboard / API 读取展示  │
-                                  └──────────────────────────┘
+┌──────────────────────────────────────────────┐
+│  ✓ 所有服务运行正常    站点 4 · 正常 4 · 异常 0 │
+├──────────────────────────────────────────────┤
+│  🟢 必应壁纸  [bimg.cc] [GET / 1m]        ✓ 正常 │
+│  ▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮ │
+│  最近 90 天 · 可用率 99.86%      检测于 12:34   │
+├──────────────────────────────────────────────┤
+│  🔴 个人博客  [blog.example.com] [GET / 1m] ✗ 异常 │
+│  ▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮▮ │
+│  最近 90 天 · 可用率 99.92%      检测于 12:34   │
+└──────────────────────────────────────────────┘
 ```
 
-**恢复流程**：站点 CNAME 指向备用节点期间，Worker 会持续通过主节点的 `checkUrl`（直连探测地址）验证其健康度，主节点恢复后自动将 CNAME 回切。
+## 使用前，确认 3 个前提
 
-## 五分钟快速开始
+| 前提 | 说明 |
+|---|---|
+| ✅ 有 Cloudflare 账号 | 免费版即可 |
+| ✅ 域名 DNS 托管在 Cloudflare | 即域名的 NS 记录指向 Cloudflare（买域名后改过 DNS 服务器的那种） |
+| ✅ 电脑装了 Node.js ≥ 18 | [nodejs.org](https://nodejs.org) 下载 LTS 版即可 |
 
-> 你只需要：一个 Cloudflare 账号 + 被监控域名的 DNS 托管在 Cloudflare + 本地装有 Node.js ≥ 18。
+> ⚠️ 如果域名 DNS 不在 Cloudflare（比如在阿里云/腾讯云解析），这个工具**用不了**——它改 DNS 走的是 Cloudflare API。
 
-### 1. 克隆并安装
+## 部署（跟着点，约 10 分钟）
+
+### 第 1 步：把代码弄下来，装好依赖
 
 ```bash
 git clone https://github.com/flow2000/cloudflare-failover-monitor.git
 cd cloudflare-failover-monitor
 npm install
-npx wrangler login   # 首次使用会打开浏览器授权
 ```
 
-### 2. 创建 D1 数据库并建表
+然后登录 Cloudflare（会弹浏览器，登录授权即可，只需一次）：
 
 ```bash
-# 创建数据库（记住输出中的 database_id）
-npx wrangler d1 create monitor-db
-
-# 建表（项目自带 schema.sql，一条命令搞定）
-npx wrangler d1 execute monitor-db --remote --file=schema.sql
+npx wrangler login
 ```
 
-把 `database_id` 填入 [wrangler.toml](wrangler.toml) 的 `[[d1_databases]]`：
+### 第 2 步：创建一个数据库（存监控记录用）
+
+```bash
+npx wrangler d1 create monitor-db
+```
+
+命令输出里有一行 `database_id = "xxxxxxxx-xxxx-..."`，**复制这串 ID**，打开项目里的 `wrangler.toml`，粘贴到这里：
 
 ```toml
 [[d1_databases]]
 binding = "DB"
 database_name = "monitor-db"
-database_id = "粘贴你的 database_id"
+database_id = "粘贴到这里"
 ```
 
-### 3. 创建 Cloudflare API Token
+然后建表（项目自带建表脚本，直接执行）：
 
-Cloudflare 控制台 → 右上角头像 → **My Profile → API Tokens → Create Token**，权限如下：
+```bash
+npx wrangler d1 execute monitor-db --remote --file=schema.sql
+```
 
-| 权限 | 资源 |
+看到 `🌀 Executing ...` 没报错就是成功了。
+
+### 第 3 步：申请一个「改 DNS 用的钥匙」（API Token）
+
+Worker 要靠这把钥匙帮你改 DNS 记录。
+
+1. 打开 [Cloudflare 控制台](https://dash.cloudflare.com)，点右上角头像 → **My Profile（我的资料）**
+2. 左侧选 **API Tokens（API 令牌）** → 点 **Create Token（创建令牌）**
+3. 拉到最下面选 **Custom token（自定义令牌）** → **Get started**
+4. 按下面填：
+
+| 项目 | 填什么 |
 |---|---|
-| `Zone - DNS - Edit` | 包含被监控域名的 Zone（或 All zones）|
-| `Zone - Zone - Read` | 同上 |
+| Token name | 随便起，如 `failover-monitor` |
+| Permissions 第 1 行 | `Zone` — `DNS` — `Edit` |
+| Permissions 第 2 行 | `Zone` — `Zone` — `Read` |
+| Zone Resources | `Include` — `Specific zone` — 选你要监控的域名（多个域名就 Add more 都选上） |
 
-创建后注入为 secret（**不要写进 wrangler.toml**）：
+5. 一路 Continue → **Create Token**，页面会显示一串 Token（只显示这一次，复制好）
+
+把这串 Token 交给 Worker（**永远不要写进 wrangler.toml，也不要提交到 Git**）：
 
 ```bash
 npx wrangler secret put CF_API_TOKEN
+# 提示输入时，粘贴 Token，回车
 ```
 
-**验证 Token 是否可用**：
+### 第 4 步：告诉它监控哪些网站
 
-```bash
-# 用户级 Token（My Profile 里创建的常规 Token）
-curl -H "Authorization: Bearer <Token>" https://api.cloudflare.com/client/v4/user/tokens/verify
-
-# 账户级 Token（cfat_ 前缀，Account API Tokens 里创建），需改用账户接口
-curl -H "Authorization: Bearer <Token>" https://api.cloudflare.com/client/v4/accounts/<ACCOUNT_ID>/tokens/verify
-
-# 验证 DNS 读取权限（应返回记录列表而非 403）
-curl -H "Authorization: Bearer <Token>" "https://api.cloudflare.com/client/v4/zones/<ZONE_ID>/dns_records?type=CNAME"
-```
-
-返回 `"status":"active"` 即有效。注意：`cfat_` 前缀的账户级 Token 调用 `/user/tokens/verify` 会返回 401，属于接口路径不对，并非 Token 失效。
-
-### 4. 配置站点
-
-编辑 `wrangler.toml` 的 `[vars]`，把 `SITES_CONFIG` 改成你的站点（JSON 数组，**必须写成单行**）：
-
-```toml
-[vars]
-SITES_CONFIG = '[{"name":"主站","url":"https://www.example.com/","zoneId":"你的ZoneID","recordName":"www.example.com","nodes":[{"name":"节点A","cname":"origin-a.example.com","checkUrl":"https://origin-a.example.com/"},{"name":"节点B","cname":"origin-b.example.com","checkUrl":"https://origin-b.example.com/"}]}]'
-```
-
-> Zone ID 在 Cloudflare 控制台域名概览页右下角。只想监控、不需要自动切换的站点，`nodes` 里只列当前节点即可。
-
-### 5. 部署
-
-```bash
-npm run deploy
-```
-
-部署完成后访问 Worker 域名即可打开监控面板：
-
-```
-https://cloudflare-failover-monitor.<你的子域>.workers.dev
-```
-
-> 建议在 Workers 设置中为 Worker 绑定自定义域名，并配置 `DASH_TOKEN` 防止面板公开。
-
-## 配置说明
-
-### 环境变量
-
-| 变量 | 类型 | 默认值 | 说明 |
-|---|---|---|---|
-| `CF_API_TOKEN` | secret | **必填** | Cloudflare API Token（Zone.DNS Edit 权限） |
-| `SITES_CONFIG` | var | `[]` | 站点配置，JSON 数组，见下表 |
-| `FAIL_ON` | var | `4xx,5xx,error` | 失败判定规则，逗号分隔：`4xx` / `5xx` / `error`（网络错误与超时） |
-| `FAILURE_THRESHOLD` | var | `2` | 连续失败多少次后触发切换（防抖动） |
-| `CHECK_TIMEOUT_MS` | var | `8000` | 单次探测超时时间（毫秒） |
-| `HISTORY_LIMIT` | var | `50` | 每个站点 API 返回的历史记录条数 |
-| `DASH_TOKEN` | secret/var | 空 | 面板访问口令，设置后需 `?token=xxx` 访问 |
-
-### SITES_CONFIG 字段
-
-| 字段 | 必填 | 说明 |
-|---|---|---|
-| `name` | 是 | 站点名称（面板展示、数据库主键使用，需唯一） |
-| `url` | 是 | 监控探测地址，返回 4XX/5XX 即判定故障 |
-| `icon` | 否 | 面板展示的网站图标 URL；不填则自动尝试源站 `/favicon.ico`，加载失败回退为首字母图标 |
-| `zoneId` | 是 | 域名所在 Zone 的 ID（Cloudflare 控制台域名概览页右下角） |
-| `recordName` | 是 | 要切换的 CNAME 记录完整名称，如 `www.example.com` |
-| `nodes` | 是 | 节点数组，**第一个为主节点**，其余按顺序为备选 |
-| `nodes[].name` | 否 | 节点显示名 |
-| `nodes[].cname` | 是 | 该节点的 CNAME 目标，如 `origin-a.example.com` |
-| `nodes[].checkUrl` | 否 | 节点直连探测地址。配置后：切换前先验证该节点健康；主节点配置后才有自动回切能力 |
-| `autoRecover` | 否 | 主节点恢复后是否自动回切，默认 `true` |
-| `handleWww` | 否 | 是否联动管理 www 子域（仅 `recordName` 为根域时生效），默认 `false`。切换目标写在主记录上，另一条记录自动 CNAME 指向主记录 |
-| `wwwFirst` | 否 | 配合 `handleWww` 使用：主记录为谁。默认 `true` 即主记录为 www、`@` 指向 www；`false` 则主记录为 `@`、www 指向 `@` |
-| `proxied` | 否 | 切换/回切时是否开启 Cloudflare 代理（橙云）：`true` / `false`；不填则保持记录当前代理状态不变 |
-| `failOn` | 否 | 站点级失败判定规则，覆盖全局 `FAIL_ON`，如 `["4xx","error"]` |
-
-### 完整示例（2 个站点 × 多节点）
+配置写在 `wrangler.toml` 的 `[vars]` 下的 `SITES_CONFIG`。内容是一个 JSON 数组，每个网站一个对象。先看**格式化版本**，结构一目了然：
 
 ```json
 [
   {
-    "name": "官网",
-    "url": "https://www.example.com/",
-    "zoneId": "abc123",
-    "recordName": "www.example.com",
-    "autoRecover": true,
-    "proxied": true,
-    "nodes": [
-      { "name": "香港主节点", "cname": "hk-origin.example.com", "checkUrl": "https://hk-origin.example.com/health" },
-      { "name": "日本备用", "cname": "jp-origin.example.com", "checkUrl": "https://jp-origin.example.com/health" },
-      { "name": "CF Pages 兜底", "cname": "backup.pages.dev" }
-    ]
-  },
-  {
-    "name": "博客",
+    "name": "我的博客",
     "url": "https://blog.example.com/",
-    "zoneId": "abc123",
+    "zoneId": "你的ZoneID",
     "recordName": "blog.example.com",
-    "failOn": ["4xx", "error"],
     "nodes": [
-      { "name": "VPS", "cname": "vps.example.com", "checkUrl": "https://vps.example.com/" },
-      { "name": "GH Pages", "cname": "you.github.io" }
+      {
+        "name": "主节点-Vercel",
+        "cname": "my-blog.vercel.app",
+        "checkUrl": "https://my-blog.vercel.app/"
+      },
+      {
+        "name": "备用-Netlify",
+        "cname": "my-blog.netlify.app",
+        "checkUrl": "https://my-blog.netlify.app/"
+      }
     ]
   }
 ]
 ```
 
-## 可视化面板与 API
+> ⚠️ **注意**：TOML 语法限制，粘贴进 `wrangler.toml` 时整个 JSON **必须压缩成一行**、并用单引号包裹。改完上面内容后，用编辑器（如 VS Code 安装 "JSON minify" 类插件）或 [json.cn](https://www.json.cn) 等在线工具压缩成一行再粘贴：
 
-| 路径 | 方法 | 说明 |
-|---|---|---|
-| `/` | GET | 监控面板（30 秒自动刷新） |
-| `/api/status` | GET | 全部站点状态与历史记录的 JSON |
+```toml
+[vars]
+SITES_CONFIG = '[{"name":"我的博客","url":"https://blog.example.com/","zoneId":"你的ZoneID","recordName":"blog.example.com","nodes":[{"name":"主节点-Vercel","cname":"my-blog.vercel.app","checkUrl":"https://my-blog.vercel.app/"},{"name":"备用-Netlify","cname":"my-blog.netlify.app","checkUrl":"https://my-blog.netlify.app/"}]}]'
+```
 
-面板展示内容：渐变状态横幅（全部正常/部分异常）、站点图标与名称、最近 90 天的每日可用性时间条（悬停查看当日可用率与事件）、站点详情气泡（ⓘ 悬停查看监控地址/记录名/CNAME 目标/节点列表）、最近检测时间。
+**每个字段是什么意思**（以上面为例）：
 
-## 本地开发
+| 字段 | 人话解释 |
+|---|---|
+| `name` | 面板上显示的名字，随便起 |
+| `url` | 它每分钟访问这个地址，能打开（返回 2xx/3xx）就算正常 |
+| `zoneId` | 域名在 Cloudflare 的 Zone ID。**在哪找**：Cloudflare 控制台 → 点进你的域名 → 右侧栏下方「API」区域里的 **Zone ID** |
+| `recordName` | 要自动切换的那条 CNAME 记录的名字。⚠️ 这条记录必须**已经存在**于 Cloudflare DNS 里，且类型是 CNAME |
+| `nodes` | 节点列表，**第 1 个是主节点**，后面的是备胎，按顺序切换 |
+| `cname` | 这个节点的 CNAME 目标（Vercel/Netlify 分配给你的那个域名） |
+| `checkUrl` | 直连探测地址。**切换前先访问它确认备胎是活的**；主节点填了它，才有「自动切回去」的能力 |
+
+> 💡 **只想监控、不想让它动 DNS** 的站点：`nodes` 里只写当前节点一项即可（没有备胎可切，它就只记录不动作）。
+
+写多个站点就是在数组里加多个对象，用逗号隔开，最后同样压缩成一行再粘贴。
+
+### 第 5 步：部署上线
 
 ```bash
-# 创建 .dev.vars 存放本地 secret（已被 .gitignore 忽略）
-# 注意必须是 KEY=value 标准格式（冒号格式 wrangler 无法解析）
-echo "CF_API_TOKEN=你的Token" > .dev.vars
-
-npm run dev        # 本地运行（cron 可用 "curl http://localhost:8787/__scheduled?cron=*+*+*+*+*" 触发）
-npm run tail       # 查看线上实时日志
+npm run deploy
 ```
+
+成功后终端会显示一个地址，打开它就是监控面板：
+
+```
+https://cloudflare-failover-monitor.<你的子域>.workers.dev
+```
+
+**到此部署完成。** 它已经开始每分钟帮你盯网站了。
+
+### 第 6 步（强烈建议）：给面板加个密码
+
+面板默认谁都能打开。设个口令：
+
+```bash
+npx wrangler secret put DASH_TOKEN
+# 输入你想用的密码，回车
+```
+
+以后访问面板要带上密码：`https://你的地址/?token=你的密码`（浏览器收藏夹存这个完整链接即可）。
+
+## 面板怎么看
+
+| 界面元素 | 含义 |
+|---|---|
+| 顶部横幅颜色 | 🟢绿=全部正常 / 🟠橙=数据加载中 / 🔴红=有站点异常 |
+| 站点名右侧灰徽标（如 `bimg.cc`） | 当前监控的 DNS 记录名，**点击可直接访问该网站** |
+| `GET / 1m` 徽标 | 表示每分钟 GET 探测一次。**鼠标悬停**可看详情：监控地址、记录名、当前 CNAME 指向哪个节点、节点列表 |
+| 时间条（90 根小柱子） | 左旧右新，一根 = 一天。绿=当天全部正常；红=当天有故障；灰=当天无数据。**悬停**看当天可用率和切换事件 |
+| `✓ 正常` / `✗ 异常` | 最近一次探测结果 |
+| 底部「可用率 xx%」 | 最近 90 天的综合可用率 |
+
+页面每 30 秒自动刷新一次。
+
+另有 JSON 接口 `https://你的地址/api/status`（同样要带 token），可以接入 Uptime Kuma、企业微信机器人等第三方告警。
+
+## 日常怎么用
+
+**加一个新站点**：改 `wrangler.toml` 里 `SITES_CONFIG`（JSON 数组里加一个对象）→ `npm run deploy` → 记得新域名要在第 3 步 Token 的授权范围内。
+
+**改阈值/超时**：改 `wrangler.toml` 的 `[vars]` → `npm run deploy`。
+
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `FAILURE_THRESHOLD` | `2` | 连续失败几次才切换。调 `1` 切得快（约 1 分钟）但可能误切；调 `3` 更稳但慢 |
+| `CHECK_TIMEOUT_MS` | `8000` | 超过 8 秒没响应算失败 |
+| `FAIL_ON` | `4xx,5xx,error` | 什么情况算失败 |
+
+**看它在干嘛（实时日志）**：
+
+```bash
+npm run tail
+```
+
+切换动作、API 报错都会打在这里。
+
+**手动验证切换功能是否正常**（建议部署后做一次）：把主节点的网站临时搞挂（比如在 Vercel 暂停该部署）→ 等 2~3 分钟 → 看面板时间条变红、`GET / 1m` 气泡里 CNAME 目标变成备用节点 → 恢复主节点 → 看它自动切回来。
+
+## 故障切换的完整逻辑（想了解细节再看）
+
+```
+每分钟一次 cron：
+  访问站点 url
+    ├─ 正常 → 连续失败清零
+    │         └─ 如果当前指向备胎 且 主节点 checkUrl 能访问 → 切回主节点
+    └─ 失败（4xx/5xx/超时/网络错误）→ 连续失败 +1
+              └─ 达到 FAILURE_THRESHOLD（默认 2 次）：
+                    按 nodes 顺序找备胎：
+                      有 checkUrl 的先探测，活的才切
+                    调 Cloudflare API 改 recordName 的 CNAME
+                    计数清零（下一轮重新计数，避免每分钟狂调 API）
+```
+
+几点细节：
+
+- **Vercel 额度耗尽返回 402/429，属于 4xx，会被正确识别为故障**并触发切换。
+- 每次切换事件会写进数据库，在时间条和 API 里都能看到（每天最多保留 3 条事件）。
+- 检测数据保留最近 90 天，每天自动清理，不用管。
+- 切换后若开了 Cloudflare 代理（橙云）即刻生效；仅 DNS（灰云）要等 TTL，建议 TTL 设 60 秒。
+
+## 高级配置（可选）
+
+`SITES_CONFIG` 里每个站点还支持这些字段：
+
+| 字段 | 说明 |
+|---|---|
+| `icon` | 面板上的网站图标 URL；不填自动用源站 `/favicon.ico`，加载失败显示首字母 |
+| `autoRecover` | 主节点恢复后是否自动回切，默认 `true`。设 `false` 则切走后不自动回来 |
+| `failOn` | 站点级失败规则，覆盖全局。如 `["4xx","error"]` 表示 5xx 不算故障 |
+| `proxied` | 切换时强制设置代理开关：`true` 橙云 / `false` 灰云；不填保持原状 |
+| `handleWww` | 仅 `recordName` 是根域（如 `example.com`）时可用。开启后自动管理 `example.com` 和 `www.example.com` 两条记录：切换只改主记录，另一条自动指过去 |
+| `wwwFirst` | 配合 `handleWww`：默认 `true`（主记录是 www，@ 指向 www）；`false` 反过来 |
 
 ## 常见问题
 
-**Q：切换后多久生效？**
-若记录开启 Cloudflare 代理（橙色云），CNAME 变更即刻生效；若为仅 DNS 模式，取决于 TTL，建议把 TTL 调低（如 60s）。
-
 **Q：为什么一直不切换？**
-按顺序排查：① `CF_API_TOKEN` 是否注入且权限正确；② 连续失败次数是否达到 `FAILURE_THRESHOLD`；③ `npm run tail` 查看日志中是否有 API 报错；④ 备用节点 `checkUrl` 是否全部不健康（面板事件中会显示"所有备选节点均不健康"）。
+按顺序查：
+1. `npm run tail` 看日志有没有 Cloudflare API 报错（Token 没权限/没注入最常见）；
+2. 连续失败要达到 `FAILURE_THRESHOLD` 次才切（默认 2，即故障至少持续约 2 分钟）；
+3. 所有备胎的 `checkUrl` 都不健康时不会切（面板事件里会写「所有备选节点均不健康」）；
+4. `recordName` 对应的 CNAME 记录必须已存在于 Cloudflare DNS。
 
-**Q：为什么不会自动回切？**
-自动回切依赖主节点（`nodes[0]`）配置 `checkUrl` 直连探测地址——因为站点恢复指的是主节点恢复，而站点 URL 此时解析到备用节点，无法反映主节点状态。
+**Q：为什么不自动回切？**
+自动回切要求主节点（`nodes[0]`）填了 `checkUrl`。原因：站点 url 此时解析到备胎，访问它无法得知主节点是否恢复，必须直连探测主节点。
 
-**Q：某些站点对探测返回 403 怎么办？**
-为目标站点配置一个专门的轻量健康检查路径（如 `/health`），或为该站点设置 `failOn` 覆盖全局规则。
+**Q：免费额度够吗？**
+够。Cloudflare Workers 免费版 10 万次请求/天、D1 免费版 10 万行写/天。4 个站点每分钟检测 ≈ 1.7 万行写/天（17%），面板访问有 25 秒内存缓存几乎不耗读。监控 10 个以内站点随便用。
 
-**Q：免费套餐够用吗？**
-够用。D1 免费额度为每天 10 万行写入 / 500 万行读取：Cron 每分钟为每个站点写 3 行（检测明细 + 状态 + 按日聚合），4 个站点约 1.7 万行/天（占 17%）；面板访问走 Worker 内存缓存（25 秒），几乎不产生额外读取。检测明细与按日聚合均只保留最近 90 天，每天自动清理。
+**Q：面板访问很慢/数据有延迟？**
+面板数据有 25 秒缓存 + 每分钟才有一次新检测，「更新于」时间落后 1 分钟以内都正常。
 
-**Q：为什么从 KV 换成 D1？**
-Workers KV 免费版每天仅 1000 次写入，分钟级监控很容易超限，超限后故障计数无法持久化，自动切换会失灵。D1 免费额度是其 100 倍，且支持 SQL 查询，更适合结构化监控数据。
+**Q：改完 wrangler.toml 没生效？**
+`[vars]` 的修改必须 `npm run deploy` 重新部署才生效；secret（CF_API_TOKEN、DASH_TOKEN）改完立即生效，不用重新部署。
 
 ## License
 
