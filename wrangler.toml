@@ -33,6 +33,7 @@ HISTORY_LIMIT = "50"
 # 可视化配置功能（可选）
 #   npx wrangler secret put CONFIG_PATH       # 自定义访问路径，如 /cfg-x7k2p9
 #   npx wrangler secret put CONFIG_TOKEN      # 强密码（≥12 位，含大小写+数字+符号）
+# 配置页自带验证器 App 二次验证（TOTP）：首次登录扫码绑定，密钥自动生成存 D1，无需额外配置
 
 # 敏感配置请使用 secret 注入，切勿写入本文件：
 #   npx wrangler secret put CF_API_TOKEN

@@ -84,7 +84,7 @@ async function loadData(db, cfg) {
 
   const states = {};
   for (const r of stateRes.results) {
-    if (r.site !== "__meta__" && r.site !== "__config__") states[r.site] = JSON.parse(r.json);
+    if (r.site !== "__meta__" && r.site !== "__config__" && r.site !== "__totp__") states[r.site] = JSON.parse(r.json);
   }
   const daily = {};
   for (const r of dailyRes.results) {
@@ -134,7 +134,7 @@ async function runChecks(env, cfg) {
   const stateRes = await db.prepare("SELECT site, json FROM state").all();
   const states = {};
   for (const r of stateRes.results) {
-    if (r.site !== "__meta__" && r.site !== "__config__") states[r.site] = JSON.parse(r.json);
+    if (r.site !== "__meta__" && r.site !== "__config__" && r.site !== "__totp__") states[r.site] = JSON.parse(r.json);
   }
   await Promise.all(
     cfg.sites.map((site) =>

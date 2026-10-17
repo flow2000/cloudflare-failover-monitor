@@ -1,7 +1,13 @@
 // 可视化管理页：站点配置的增删改查，保存后立即生效（无需重新部署）
-// 访问控制：自定义路径（CONFIG_PATH）+ 强密码（CONFIG_TOKEN）双因子
+// 访问控制：自定义路径（CONFIG_PATH）+ 强密码（CONFIG_TOKEN）+ 验证器 App 二次验证（TOTP）
+// 登录成功后签发会话 Cookie（HMAC-SHA256 签名，12 小时有效），期间无需重复输入密码
 
 import { isStrongPassword, validateSites } from "./config.js";
+import { generateTotpSecret, verifyTotp, safeEqual, hmacB64url, otpauthUri, qrSvg } from "./totp.js";
+
+const HTML_CT = { "Content-Type": "text/html; charset=utf-8" };
+const SESSION_COOKIE = "cfg_sess";
+const SESSION_TTL_MS = 12 * 3600e3;
 
 // 检查管理功能是否可用
 function adminStatus(env) {
@@ -12,21 +18,73 @@ function adminStatus(env) {
   return { enabled: true };
 }
 
-// 从 query 或 header 取 token 鉴权
-function checkAuth(request, env) {
-  const url = new URL(request.url);
-  const token = url.searchParams.get("token") || request.headers.get("x-config-token");
-  return token === env.CONFIG_TOKEN;
-}
-
 function esc(s) {
   return String(s ?? "").replace(/[&<>"']/g, (c) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
   }[c]));
 }
 
+// 注入 <script> 的字符串：防 </script> 逃逸（JSON/JS 中 \u003c 语义等价）
+function jsStr(s) {
+  return JSON.stringify(s).replace(/</g, "\\u003c");
+}
+
 // 与 dashboard 相同的内联 SVG 图标，避免浏览器请求 /favicon.ico 返回 404
 const FAVICON = `<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2310b981'/%3E%3Cpath d='M10 36h12l6-16 8 28 6-12h12' stroke='%23ffffff' stroke-width='5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">`;
+
+// ===== 会话 Cookie =====
+async function sessionResponse(resp, env) {
+  const exp = Date.now() + SESSION_TTL_MS;
+  const sig = await hmacB64url(env.CONFIG_TOKEN, String(exp));
+  const headers = new Headers(resp.headers);
+  headers.append(
+    "Set-Cookie",
+    `${SESSION_COOKIE}=${exp}.${sig}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`
+  );
+  return new Response(resp.body, { status: resp.status, headers });
+}
+
+function clearedSessionResponse(resp) {
+  const headers = new Headers(resp.headers);
+  headers.append("Set-Cookie", `${SESSION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`);
+  return new Response(resp.body, { status: resp.status, headers });
+}
+
+// Cookie 值 = 过期时间戳.HMAC 签名；无 CONFIG_TOKEN 无法伪造
+async function hasValidSession(request, env) {
+  const cookie = request.headers.get("Cookie") || "";
+  const m = cookie.match(new RegExp(`(?:^|;\\s*)${SESSION_COOKIE}=([^;]+)`));
+  if (!m) return false;
+  const dot = m[1].lastIndexOf(".");
+  if (dot < 1) return false;
+  const expStr = m[1].slice(0, dot);
+  const sig = m[1].slice(dot + 1);
+  const exp = parseInt(expStr, 10);
+  if (!exp || exp < Date.now()) return false;
+  return safeEqual(sig, await hmacB64url(env.CONFIG_TOKEN, expStr));
+}
+
+// ===== 二次验证状态（存 D1 state 表 __totp__ 行）=====
+// { secret, enrolled?: true, createdAt?, enrolledAt? }；无 enrolled = 待确认
+async function getTotpState(db) {
+  try {
+    const row = await db.prepare("SELECT json FROM state WHERE site = '__totp__'").first();
+    return row && row.json ? JSON.parse(row.json) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function saveTotpState(db, st) {
+  await db
+    .prepare("INSERT INTO state (site, json) VALUES ('__totp__', ?) ON CONFLICT(site) DO UPDATE SET json = excluded.json")
+    .bind(JSON.stringify(st))
+    .run();
+}
+
+function jsonResponse(obj, status = 200) {
+  return new Response(JSON.stringify(obj), { status, headers: { "Content-Type": "application/json" } });
+}
 
 // 功能禁用提示页
 function renderDisabledPage(reason) {
@@ -59,39 +117,103 @@ ${FAVICON}
 </body></html>`;
 }
 
-// 密码输入页（未认证时）
-function renderAuthPage(path) {
+// 登录 / 绑定页（未认证时）
+// enrolled=false 且 enroll 提供时（URL token 直达且未绑定），直接显示扫码绑定界面
+function renderAuthPage(path, enrolled, enroll, urlToken) {
   return `<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
 ${FAVICON}
 <title>配置管理</title>
 <style>
   * { box-sizing: border-box; margin: 0; }
   body { background: #f0f2f5; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Microsoft YaHei", sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
-  .card { background: #fff; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,.08); max-width: 400px; padding: 40px; text-align: center; }
+  .card { background: #fff; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,.08); max-width: 420px; padding: 40px; text-align: center; }
   .icon { color: #6366f1; font-size: 48px; margin-bottom: 16px; }
   h1 { color: #131a26; font-size: 20px; margin-bottom: 24px; }
-  input { border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px; padding: 10px 14px; width: 100%; }
+  input { border: 1px solid #d1d5db; border-radius: 8px; font-size: 14px; margin-top: 10px; padding: 10px 14px; width: 100%; }
   input:focus { border-color: #6366f1; outline: none; }
-  button { background: #6366f1; border: none; border-radius: 8px; color: #fff; cursor: pointer; font-size: 14px; margin-top: 12px; padding: 10px 24px; width: 100%; }
+  button { background: #6366f1; border: none; border-radius: 8px; color: #fff; cursor: pointer; font-size: 14px; margin-top: 14px; padding: 10px 24px; width: 100%; }
   button:hover { background: #4f46e5; }
-  .err { color: #dc2626; font-size: 13px; margin-top: 8px; display: none; }
+  .err { color: #dc2626; font-size: 13px; margin-top: 10px; display: none; }
+  .hint { color: #6b7280; font-size: 13px; line-height: 1.6; margin-bottom: 14px; text-align: left; }
+  #qr svg { display: inline-block; }
+  #secret-txt { background: #f3f4f6; border-radius: 6px; color: #1e293b; display: block; font-family: monospace; font-size: 13px; letter-spacing: 1px; margin: 6px 0 14px; padding: 8px; word-break: break-all; }
+  code { color: #dc2626; }
 </style></head><body>
 <div class="card">
   <div class="icon">🔐</div>
   <h1>配置管理</h1>
-  <form id="f">
-    <input type="password" id="t" placeholder="请输入 CONFIG_TOKEN" autofocus>
-    <button type="submit">进入</button>
-    <div class="err" id="e">密码错误</div>
-  </form>
+  <div id="step-login">
+    <form id="f">
+      <input type="password" id="t" placeholder="请输入 CONFIG_TOKEN" autofocus>
+      <input type="text" id="c" placeholder="验证器 App 上的 6 位验证码" inputmode="numeric" maxlength="6" autocomplete="one-time-code" style="display:none">
+      <button type="submit">进入</button>
+      <div class="err" id="e"></div>
+    </form>
+  </div>
+  <div id="step-enroll" style="display:none">
+    <p class="hint">首次使用，请用验证器 App（Google Authenticator、Microsoft Authenticator、1Password 等）扫描下方二维码：</p>
+    <div id="qr"></div>
+    <p class="hint" style="margin-top:12px">无法扫码？在 App 中选择「手动输入密钥」：</p>
+    <code id="secret-txt"></code>
+    <form id="fe">
+      <input type="text" id="ce" placeholder="输入 App 显示的 6 位验证码" inputmode="numeric" maxlength="6" autocomplete="one-time-code">
+      <button type="submit">验证并绑定</button>
+      <div class="err" id="ee"></div>
+    </form>
+  </div>
 </div>
 <script>
+var PATH = ${jsStr(path)};
+var ENROLLED = ${enrolled ? "true" : "false"};
+var ENROLL = ${enroll ? jsStr(enroll) : "null"};
+var URL_TOKEN = ${jsStr(urlToken || "")};
+var TOKEN = URL_TOKEN;
+
+function post(url, data) {
+  return fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data)
+  }).then(function(r) { return r.json().catch(function() { return { ok: false, message: "响应异常" }; }); });
+}
+function showErr(id, msg) {
+  var e = document.getElementById(id);
+  e.textContent = msg;
+  e.style.display = "";
+}
+function showEnroll(data) {
+  document.getElementById("step-login").style.display = "none";
+  document.getElementById("step-enroll").style.display = "";
+  document.getElementById("qr").innerHTML = data.qrSvg;
+  document.getElementById("secret-txt").textContent = data.secret;
+}
+if (ENROLL) showEnroll(ENROLL);
+if (ENROLLED) document.getElementById("c").style.display = "";
+
 document.getElementById("f").addEventListener("submit", function(e) {
   e.preventDefault();
   var t = document.getElementById("t").value;
+  var c = document.getElementById("c").value.trim();
   if (!t) return;
-  location.href = ${JSON.stringify(path)} + "?token=" + encodeURIComponent(t);
+  TOKEN = t;
+  post(PATH + "/api/auth/login", { token: t, code: c }).then(function(res) {
+    if (res.ok) { location.href = PATH; return; }
+    showErr("e", res.message || "登录失败");
+    if (res.needTotp) document.getElementById("c").style.display = "";
+    if (res.mode === "enroll") showEnroll(res);
+  });
+});
+
+document.getElementById("fe").addEventListener("submit", function(e) {
+  e.preventDefault();
+  var c = document.getElementById("ce").value.trim();
+  if (!c) return;
+  post(PATH + "/api/auth/enroll", { token: TOKEN, code: c }).then(function(res) {
+    if (res.ok) { location.href = PATH; return; }
+    showErr("ee", res.message || "验证失败");
+  });
 });
 </script>
 </body></html>`;
@@ -100,7 +222,7 @@ document.getElementById("f").addEventListener("submit", function(e) {
 // 配置管理页（表单式编辑器）
 function renderAdminPage(sites, source, path) {
   // 注入 <script> 的 JSON 不能做 HTML 转义（实体不会被解码），只需防 </script> 逃逸
-  const sitesJson = JSON.stringify(sites).replace(/</g, "\\u003c");
+  const sitesJson = jsStr(sites);
   return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -118,9 +240,12 @@ ${FAVICON}
   #header { background: linear-gradient(135deg, #6366f1, #4f46e5 50%, #4338ca); color: #fff; padding: 24px 0; margin-bottom: 20px; border-radius: 12px; }
   #header .container { display: flex; align-items: center; justify-content: space-between; }
   .logo { font-size: 20px; font-weight: 700; }
+  .header-ops { align-items: center; display: flex; gap: 8px; }
   .source-badge { background: rgba(255,255,255,.2); border-radius: 6px; font-size: 12px; padding: 4px 10px; }
   .source-badge.env { background: rgba(245,158,11,.3); }
   .source-badge.d1 { background: rgba(16,185,129,.3); }
+  .hdr-btn { background: rgba(255,255,255,.15); border: none; border-radius: 6px; color: #fff; cursor: pointer; font-size: 12px; padding: 5px 10px; }
+  .hdr-btn:hover { background: rgba(255,255,255,.3); }
 
   /* ===== 站点卡片 ===== */
   .site-card { background: #fff; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.06); margin-bottom: 16px; overflow: hidden; }
@@ -191,7 +316,11 @@ ${FAVICON}
 <header id="header">
   <div class="container">
     <span class="logo">⚙ 配置管理</span>
-    <span class="source-badge ${source}">生效来源: ${source === "d1" ? "页面配置" : "wrangler.toml"}</span>
+    <div class="header-ops">
+      <span class="source-badge ${source}">生效来源: ${source === "d1" ? "页面配置" : "wrangler.toml"}</span>
+      <button class="hdr-btn" onclick="resetTotp()">🔑 重置二次验证</button>
+      <button class="hdr-btn" onclick="logout()">退出登录</button>
+    </div>
   </div>
 </header>
 
@@ -210,8 +339,7 @@ ${FAVICON}
 <script>
 // 初始配置数据（从服务端注入）
 var SITES = ${sitesJson};
-var API_PATH = ${JSON.stringify(path)};
-var TOKEN = new URLSearchParams(location.search).get("token") || "";
+var API_PATH = ${jsStr(path)};
 
 // ===== 渲染 =====
 function esc(s) {
@@ -369,6 +497,12 @@ function showToast(msg, type) {
   setTimeout(function() { t.className = ""; }, 3000);
 }
 
+// 会话过期时统一跳回登录页
+function handleAuthExpired(r) {
+  if (r.status === 401) { location.href = API_PATH; return null; }
+  return r.json();
+}
+
 function saveConfig() {
   var data = collectData();
   var btn = document.getElementById("save-btn");
@@ -376,11 +510,12 @@ function saveConfig() {
   btn.textContent = "保存中...";
   fetch(API_PATH + "/api/config", {
     method: "POST",
-    headers: { "Content-Type": "application/json", "x-config-token": TOKEN },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
   })
-    .then(function(r) { return r.json(); })
+    .then(handleAuthExpired)
     .then(function(res) {
+      if (!res) return;
       if (res.ok) {
         showToast("✅ " + res.message);
         setTimeout(function() { location.reload(); }, 1500);
@@ -394,12 +529,10 @@ function saveConfig() {
 
 function resetConfig() {
   if (!confirm("确定要恢复为 wrangler.toml 中的配置吗？页面配置将被删除。")) return;
-  fetch(API_PATH + "/api/config", {
-    method: "DELETE",
-    headers: { "x-config-token": TOKEN },
-  })
-    .then(function(r) { return r.json(); })
+  fetch(API_PATH + "/api/config", { method: "DELETE" })
+    .then(handleAuthExpired)
     .then(function(res) {
+      if (!res) return;
       if (res.ok) { showToast("✅ " + res.message); setTimeout(function() { location.reload(); }, 1500); }
       else showToast("❌ " + res.message, "error");
     })
@@ -418,6 +551,21 @@ function exportJson() {
   showToast("✅ 单行 JSON 已复制到剪贴板，可粘贴到 wrangler.toml 备份");
 }
 
+function logout() {
+  fetch(API_PATH + "/api/auth/logout", { method: "POST" }).then(function() { location.href = API_PATH; });
+}
+
+function resetTotp() {
+  if (!confirm("确定重置二次验证吗？重置后下次访问将要求重新扫码绑定验证器 App。")) return;
+  fetch(API_PATH + "/api/auth/reset-totp", { method: "POST" })
+    .then(function(r) { return r.json(); })
+    .then(function(res) {
+      showToast((res.ok ? "✅ " : "❌ ") + (res.message || "操作失败"), res.ok ? "success" : "error");
+      if (res.ok) setTimeout(function() { location.href = API_PATH; }, 1500);
+    })
+    .catch(function(e) { showToast("❌ 请求失败: " + e.message, "error"); });
+}
+
 // 初始化
 render();
 </script>
@@ -429,26 +577,95 @@ render();
 export async function handleAdmin(request, env, cfg) {
   const url = new URL(request.url);
   const path = cfg.configPath; // 已由 resolveConfig 归一化（确保以 / 开头）
-  const sub = url.pathname.slice(path.length); // "" 或 "/api/config"
+  const sub = url.pathname.slice(path.length); // "" | "/api/config" | "/api/auth/..."
 
   // 1. 功能是否启用
   const status = adminStatus(env);
   if (!status.enabled) {
-    return new Response(renderDisabledPage(status.reason), {
-      status: 503,
-      headers: { "Content-Type": "text/html; charset=utf-8" },
-    });
+    return new Response(renderDisabledPage(status.reason), { status: 503, headers: HTML_CT });
   }
 
-  // 2. 鉴权
-  if (!checkAuth(request, env)) {
-    return new Response(renderAuthPage(path), {
-      status: 401,
-      headers: { "Content-Type": "text/html; charset=utf-8" },
-    });
+  // 2. 认证端点（建立会话，无需已登录）
+  if (sub === "/api/auth/login" && request.method === "POST") {
+    const body = await request.json().catch(() => ({}));
+    if (String(body.token || "") !== env.CONFIG_TOKEN) {
+      return jsonResponse({ ok: false, message: "密码错误" }, 401);
+    }
+    const totp = await getTotpState(env.DB);
+    if (totp && totp.enrolled) {
+      if (!body.code) return jsonResponse({ ok: false, needTotp: true, message: "请输入验证器 App 上的 6 位验证码" });
+      if (!(await verifyTotp(totp.secret, body.code))) {
+        return jsonResponse({ ok: false, needTotp: true, message: "验证码错误或已过期" }, 401);
+      }
+      return sessionResponse(jsonResponse({ ok: true }), env);
+    }
+    // 未绑定：生成待确认密钥，返回扫码绑定信息
+    const secret = generateTotpSecret();
+    await saveTotpState(env.DB, { secret, createdAt: Date.now() });
+    const uri = otpauthUri(secret);
+    return jsonResponse({ ok: true, mode: "enroll", secret, otpauth: uri, qrSvg: qrSvg(uri) });
   }
 
-  // 3. API 路由
+  if (sub === "/api/auth/enroll" && request.method === "POST") {
+    const body = await request.json().catch(() => ({}));
+    if (String(body.token || "") !== env.CONFIG_TOKEN) {
+      return jsonResponse({ ok: false, message: "密码错误" }, 401);
+    }
+    const totp = await getTotpState(env.DB);
+    if (!totp || !totp.secret) {
+      return jsonResponse({ ok: false, message: "绑定会话已失效，请返回重新登录" }, 400);
+    }
+    if (!(await verifyTotp(totp.secret, body.code))) {
+      return jsonResponse({ ok: false, message: "验证码错误，请确认扫描的是刚显示的二维码" }, 401);
+    }
+    if (!totp.enrolled) {
+      await saveTotpState(env.DB, { secret: totp.secret, enrolled: true, enrolledAt: Date.now() });
+    }
+    return sessionResponse(jsonResponse({ ok: true }), env);
+  }
+
+  if (sub === "/api/auth/logout" && request.method === "POST") {
+    return clearedSessionResponse(jsonResponse({ ok: true }));
+  }
+
+  if (sub === "/api/auth/reset-totp" && request.method === "POST") {
+    if (!(await hasValidSession(request, env))) {
+      return jsonResponse({ ok: false, message: "未登录" }, 401);
+    }
+    await env.DB.prepare("DELETE FROM state WHERE site = '__totp__'").run();
+    return jsonResponse({ ok: true, message: "二次验证已重置，重新登录后扫码绑定" });
+  }
+
+  // 3. 会话 / 令牌鉴权
+  let authed = await hasValidSession(request, env);
+  if (!authed) {
+    const token = url.searchParams.get("token") || request.headers.get("x-config-token");
+    if (token === env.CONFIG_TOKEN) {
+      const totp = await getTotpState(env.DB);
+      if (totp && totp.enrolled) {
+        // 已绑定：令牌还需搭配验证码（?code= 或 x-totp 头）
+        const code = url.searchParams.get("code") || request.headers.get("x-totp");
+        if (await verifyTotp(totp.secret, code || "")) {
+          authed = true;
+        }
+      } else if (request.method === "GET") {
+        // 未绑定：密码正确也强制先绑定验证器
+        const secret = totp ? totp.secret : generateTotpSecret();
+        if (!totp) await saveTotpState(env.DB, { secret, createdAt: Date.now() });
+        const uri = otpauthUri(secret);
+        return new Response(renderAuthPage(path, false, { secret, qrSvg: qrSvg(uri) }, token), {
+          status: 401,
+          headers: HTML_CT,
+        });
+      }
+    }
+  }
+  if (!authed) {
+    const totp = await getTotpState(env.DB);
+    return new Response(renderAuthPage(path, !!(totp && totp.enrolled), null, ""), { status: 401, headers: HTML_CT });
+  }
+
+  // 4. API 路由
   if (sub === "/api/config") {
     if (request.method === "GET") {
       const row = await env.DB.prepare("SELECT json FROM state WHERE site = '__config__'").first();
@@ -460,33 +677,31 @@ export async function handleAdmin(request, env, cfg) {
       try {
         body = await request.json();
       } catch {
-        return Response.json({ ok: false, message: "请求体必须是 JSON" }, { status: 400 });
+        return jsonResponse({ ok: false, message: "请求体必须是 JSON" }, 400);
       }
       const errors = validateSites(body);
       if (errors.length) {
-        return Response.json({ ok: false, errors }, { status: 400 });
+        return jsonResponse({ ok: false, errors }, 400);
       }
       await env.DB.prepare(
         "INSERT INTO state (site, json) VALUES ('__config__', ?) ON CONFLICT(site) DO UPDATE SET json = excluded.json"
       )
         .bind(JSON.stringify(body))
         .run();
-      return Response.json({ ok: true, message: "配置已保存，下一轮检测（1 分钟内）起生效" });
+      return jsonResponse({ ok: true, message: "配置已保存，下一轮检测（1 分钟内）起生效" });
     }
     if (request.method === "DELETE") {
       await env.DB.prepare("DELETE FROM state WHERE site = '__config__'").run();
-      return Response.json({ ok: true, message: "已回退到 wrangler.toml 配置" });
+      return jsonResponse({ ok: true, message: "已回退到 wrangler.toml 配置" });
     }
     return new Response("Method Not Allowed", { status: 405 });
   }
 
-  // 4. 页面路由（GET /）
+  // 5. 页面路由（GET /）
   if (request.method === "GET" && (sub === "" || sub === "/")) {
     const row = await env.DB.prepare("SELECT json FROM state WHERE site = '__config__'").first();
     const source = row ? "d1" : "env";
-    return new Response(renderAdminPage(cfg.sites, source, path), {
-      headers: { "Content-Type": "text/html; charset=utf-8" },
-    });
+    return new Response(renderAdminPage(cfg.sites, source, path), { headers: HTML_CT });
   }
 
   return new Response("Not Found", { status: 404 });
