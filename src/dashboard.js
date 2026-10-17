@@ -223,7 +223,7 @@ export function renderDashboard(data) {
   .dd-head span { color: #6b7280; }
   .dd-close { background: none; border: none; color: #9ca3af; cursor: pointer; font-size: 16px; margin-left: auto; padding: 0 4px; }
   .dd-close:hover { color: #131a26; }
-  .dd-list { max-height: 320px; overflow-y: auto; }
+  .dd-list { max-height: 320px; overflow-y: auto; overscroll-behavior: contain; }
   .dd-row { align-items: baseline; border-top: 1px solid #eef0f2; display: flex; flex-wrap: wrap; font-size: 12px; gap: 12px; padding: 6px 14px; }
   .dd-row:first-child { border-top: none; }
   .dd-row.fail { background: #fef2f2; }
@@ -390,6 +390,18 @@ export function renderDashboard(data) {
     var bar = t && t.closest ? t.closest(".timeline i[data-day]") : null;
     if (bar) openDay(bar);
   });
+  // 鼠标在站点卡片范围内滚动时，滚轮作用于展开的明细列表（列表自身可滚时原生生效）
+  document.addEventListener("wheel", function (e) {
+    var t = e.target;
+    if (!t || !t.closest) return;
+    var siteEl = t.closest(".site");
+    if (!siteEl) return;
+    var list = siteEl.querySelector(".day-detail .dd-list");
+    if (!list || !siteEl.querySelector(".day-detail").offsetParent) return; // 明细未展开
+    if (t.closest(".dd-list")) return; // 已在列表上，原生滚动
+    e.preventDefault();
+    list.scrollTop += e.deltaY;
+  }, { passive: false });
   // 页面自动刷新后恢复之前展开的明细
   try {
     var saved = JSON.parse(sessionStorage.getItem(SS_KEY) || "null");
