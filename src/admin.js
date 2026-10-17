@@ -94,7 +94,8 @@ document.getElementById("f").addEventListener("submit", function(e) {
 
 // 配置管理页（表单式编辑器）
 function renderAdminPage(sites, source, path) {
-  const sitesJson = esc(JSON.stringify(sites, null, 2));
+  // 注入 <script> 的 JSON 不能做 HTML 转义（实体不会被解码），只需防 </script> 逃逸
+  const sitesJson = JSON.stringify(sites).replace(/</g, "\\u003c");
   return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
