@@ -606,6 +606,13 @@ export async function handleAdmin(request, env, cfg) {
   const path = cfg.configPath; // 已由 resolveConfig 归一化（确保以 / 开头）
   const sub = url.pathname.slice(path.length); // "" | "/api/config" | "/api/auth/..."
 
+  // TOTP 状态在本请求内只读一次（各写路径都是读→写→返回，无读后写再读）
+  let totpLoaded = false, totpValue = null;
+  async function getTotp() {
+    if (!totpLoaded) { totpValue = await getTotpState(env.DB); totpLoaded = true; }
+    return totpValue;
+  }
+
   // 1. 功能是否启用
   const status = adminStatus(env);
   if (!status.enabled) {
@@ -618,7 +625,7 @@ export async function handleAdmin(request, env, cfg) {
     if (String(body.token || "") !== env.CONFIG_TOKEN) {
       return jsonResponse({ ok: false, message: "密码错误" }, 401);
     }
-    const totp = await getTotpState(env.DB);
+    const totp = await getTotp();
     if (totp && totp.enrolled) {
       if (!body.code) return jsonResponse({ ok: false, needTotp: true, message: "请输入验证器 App 上的 6 位验证码" });
       if (!(await verifyTotp(totp.secret, body.code))) {
@@ -638,7 +645,7 @@ export async function handleAdmin(request, env, cfg) {
     if (String(body.token || "") !== env.CONFIG_TOKEN) {
       return jsonResponse({ ok: false, message: "密码错误" }, 401);
     }
-    const totp = await getTotpState(env.DB);
+    const totp = await getTotp();
     if (!totp || !totp.secret) {
       return jsonResponse({ ok: false, message: "绑定会话已失效，请返回重新登录" }, 400);
     }
@@ -668,7 +675,7 @@ export async function handleAdmin(request, env, cfg) {
   if (!authed) {
     const token = url.searchParams.get("token") || request.headers.get("x-config-token");
     if (token === env.CONFIG_TOKEN) {
-      const totp = await getTotpState(env.DB);
+      const totp = await getTotp();
       if (totp && totp.enrolled) {
         // 已绑定：令牌还需搭配验证码（?code= 或 x-totp 头）
         const code = url.searchParams.get("code") || request.headers.get("x-totp");
@@ -688,16 +695,14 @@ export async function handleAdmin(request, env, cfg) {
     }
   }
   if (!authed) {
-    const totp = await getTotpState(env.DB);
+    const totp = await getTotp();
     return new Response(renderAuthPage(path, !!(totp && totp.enrolled), null, ""), { status: 401, headers: HTML_CT });
   }
 
   // 4. API 路由
   if (sub === "/api/config") {
     if (request.method === "GET") {
-      const row = await env.DB.prepare("SELECT json FROM state WHERE site = '__config__'").first();
-      const source = row ? "d1" : "env";
-      return Response.json({ source, sites: cfg.sites });
+      return Response.json({ source: cfg.configSource, sites: cfg.sites });
     }
     if (request.method === "POST") {
       let body;
@@ -726,9 +731,7 @@ export async function handleAdmin(request, env, cfg) {
 
   // 5. 页面路由（GET /）
   if (request.method === "GET" && (sub === "" || sub === "/")) {
-    const row = await env.DB.prepare("SELECT json FROM state WHERE site = '__config__'").first();
-    const source = row ? "d1" : "env";
-    return new Response(renderAdminPage(cfg.sites, source, path), { headers: HTML_CT });
+    return new Response(renderAdminPage(cfg.sites, cfg.configSource, path), { headers: HTML_CT });
   }
 
   return new Response("Not Found", { status: 404 });

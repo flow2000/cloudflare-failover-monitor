@@ -10,16 +10,20 @@ export default {
     const url = new URL(request.url);
 
     // 配置管理路由（独立鉴权，先于面板鉴权）
-    if (env.CONFIG_PATH) {
-      const adminCfg = await resolveConfig(env);
-      if (adminCfg.configPath && url.pathname.startsWith(adminCfg.configPath)) {
-        const resp = await handleAdmin(request, env, adminCfg);
-        // 保存/删除配置后使面板缓存失效
-        if (url.pathname.endsWith("/api/config") && (request.method === "POST" || request.method === "DELETE")) {
-          memCache = { ts: 0, data: null };
-        }
-        return resp;
+    // configPath 仅由环境变量决定（无需读 D1），先轻量匹配，命中后才 resolveConfig，避免每次请求重复读 D1
+    // 长度 > 1 防止 CONFIG_PATH="/" 时劫持面板路由
+    const rawPath = env.CONFIG_PATH || "";
+    const configPath = rawPath ? (rawPath.startsWith("/") ? rawPath : "/" + rawPath) : "";
+    if (
+      configPath.length > 1 &&
+      (url.pathname === configPath || url.pathname.startsWith(configPath + "/"))
+    ) {
+      const resp = await handleAdmin(request, env, await resolveConfig(env));
+      // 保存/删除配置后使面板缓存失效
+      if (url.pathname.endsWith("/api/config") && (request.method === "POST" || request.method === "DELETE")) {
+        memCache = { ts: 0, data: null };
       }
+      return resp;
     }
 
     const cfg = await resolveConfig(env);
@@ -68,11 +72,14 @@ function dayStr(ts) {
   return new Date(ts + 8 * 3600e3).toISOString().slice(0, 10);
 }
 
+// state 表内部行（__meta__/__config__/__totp__）均以 __ 前缀，SQL 层直接排除
+const SITE_ROWS_ONLY = "substr(site, 1, 2) <> '__'";
+
 // 一次性读出面板所需的全部数据（单批次往返）
 async function loadData(db, cfg) {
   const cutoffDay = dayStr(Date.now() - 90 * 86400e3);
   const stmts = [
-    db.prepare("SELECT site, json FROM state"),
+    db.prepare(`SELECT site, json FROM state WHERE ${SITE_ROWS_ONLY}`),
     db.prepare("SELECT site, day, ok, fail, events FROM daily WHERE day >= ?").bind(cutoffDay),
     ...cfg.sites.map((s) =>
       db
@@ -83,9 +90,7 @@ async function loadData(db, cfg) {
   const [stateRes, dailyRes, ...histRes] = await db.batch(stmts);
 
   const states = {};
-  for (const r of stateRes.results) {
-    if (r.site !== "__meta__" && r.site !== "__config__" && r.site !== "__totp__") states[r.site] = JSON.parse(r.json);
-  }
+  for (const r of stateRes.results) states[r.site] = JSON.parse(r.json);
   const daily = {};
   for (const r of dailyRes.results) {
     const bucket = { ok: r.ok, fail: r.fail };
@@ -131,11 +136,9 @@ async function runChecks(env, cfg) {
   }
   const db = env.DB;
   // 读出全部站点状态（含连续失败计数）
-  const stateRes = await db.prepare("SELECT site, json FROM state").all();
+  const stateRes = await db.prepare(`SELECT site, json FROM state WHERE ${SITE_ROWS_ONLY}`).all();
   const states = {};
-  for (const r of stateRes.results) {
-    if (r.site !== "__meta__" && r.site !== "__config__" && r.site !== "__totp__") states[r.site] = JSON.parse(r.json);
-  }
+  for (const r of stateRes.results) states[r.site] = JSON.parse(r.json);
   await Promise.all(
     cfg.sites.map((site) =>
       processSite(env, cfg, site, db, states[site.name] || { consecutiveFailures: 0 }).catch((e) =>

@@ -67,18 +67,23 @@ export function validateSites(sites) {
 }
 
 // 异步解析生效配置：D1 中保存的 __config__ 优先于 wrangler.toml 的 SITES_CONFIG
+// 返回值附带 configSource（"d1" | "env"），调用方无需再次查询 D1 判断来源
 export async function resolveConfig(env) {
   const cfg = getConfig(env);
   // 附加管理功能配置（不参与 D1 覆盖）；CONFIG_PATH 容错：缺少前导斜杠时自动补上
   const rawPath = env.CONFIG_PATH || "";
   cfg.configPath = rawPath ? (rawPath.startsWith("/") ? rawPath : "/" + rawPath) : "";
   cfg.configToken = env.CONFIG_TOKEN || "";
+  cfg.configSource = "env";
   // D1 中保存的配置优先于 wrangler.toml
   try {
     const row = await env.DB.prepare("SELECT json FROM state WHERE site = '__config__'").first();
     if (row && row.json) {
       const parsed = JSON.parse(row.json);
-      if (Array.isArray(parsed)) cfg.sites = parsed;
+      if (Array.isArray(parsed)) {
+        cfg.sites = parsed;
+        cfg.configSource = "d1";
+      }
     }
   } catch (e) {
     console.error("读取 D1 配置失败，使用 wrangler.toml 配置:", e.message);
