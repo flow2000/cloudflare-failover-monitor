@@ -25,10 +25,14 @@ function esc(s) {
   }[c]));
 }
 
+// 与 dashboard 相同的内联 SVG 图标，避免浏览器请求 /favicon.ico 返回 404
+const FAVICON = `<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2310b981'/%3E%3Cpath d='M10 36h12l6-16 8 28 6-12h12' stroke='%23ffffff' stroke-width='5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">`;
+
 // 功能禁用提示页
 function renderDisabledPage(reason) {
   return `<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+${FAVICON}
 <title>配置管理</title>
 <style>
   * { box-sizing: border-box; margin: 0; }
@@ -59,6 +63,7 @@ function renderDisabledPage(reason) {
 function renderAuthPage(path) {
   return `<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+${FAVICON}
 <title>配置管理</title>
 <style>
   * { box-sizing: border-box; margin: 0; }
@@ -102,6 +107,7 @@ function renderAdminPage(sites, source, path) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex,nofollow">
+${FAVICON}
 <title>配置管理 - 站点监控</title>
 <style>
   * { box-sizing: border-box; margin: 0; }
