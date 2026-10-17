@@ -139,7 +139,6 @@ export function renderDashboard(data) {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="description" content="多站点可用性监控面板：每分钟自动检测，故障时自动切换 CNAME 至备用节点">
-<meta http-equiv="refresh" content="30">
 <title>站点监控</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2310b981'/%3E%3Cpath d='M10 36h12l6-16 8 28 6-12h12' stroke='%23ffffff' stroke-width='5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
 <style>
@@ -404,6 +403,12 @@ export function renderDashboard(data) {
       }
     }
   } catch (e) {}
+
+  // 30 秒自动刷新；明细面板展开时暂停刷新，避免打断查看
+  setInterval(function () {
+    try { if (sessionStorage.getItem(SS_KEY)) return; } catch (e) {}
+    location.reload();
+  }, 30000);
 })();
 </script>
 </body>
