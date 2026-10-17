@@ -42,6 +42,9 @@ export default {
     if (url.pathname === "/api/status") {
       return Response.json(await collectStatus(env, cfg));
     }
+    if (url.pathname === "/api/checks") {
+      return Response.json(await dayChecks(env, cfg, url.searchParams.get("site"), url.searchParams.get("day")));
+    }
     if (url.pathname === "/" || url.pathname === "/index.html") {
       const data = await collectStatus(env, cfg);
       return new Response(renderDashboard(data), {
@@ -107,6 +110,25 @@ async function loadData(db, cfg) {
     });
   });
   return { states, histories, daily };
+}
+
+// 查询某站点某一天（UTC+8 日期）的全部检测明细，供面板点击时间条后展开
+async function dayChecks(env, cfg, siteName, day) {
+  if (!siteName || !/^\d{4}-\d{2}-\d{2}$/.test(day || "")) return [];
+  if (!cfg.sites.some((s) => s.name === siteName)) return [];
+  const start = Date.parse(`${day}T00:00:00+08:00`);
+  const res = await env.DB
+    .prepare("SELECT ts, ok, status, latency_ms, event, error FROM checks WHERE site = ? AND ts >= ? AND ts < ? ORDER BY ts ASC LIMIT 2000")
+    .bind(siteName, start, start + 86400e3)
+    .all();
+  return res.results.map((r) => ({
+    ts: r.ts,
+    ok: !!r.ok,
+    status: r.status ?? undefined,
+    latencyMs: r.latency_ms ?? undefined,
+    event: r.event || undefined,
+    error: r.error || undefined,
+  }));
 }
 
 // 聚合所有站点状态，供面板与 /api/status 使用

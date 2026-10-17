@@ -64,7 +64,7 @@ function renderFavicon(site) {
 }
 
 // 时间线条：最近 90 天每日可用性（左旧右新），无数据的日期用灰色占位条
-function renderTimeline(daily) {
+function renderTimeline(daily, siteName) {
   const days = [];
   const base = Date.now() + 8 * 3600e3; // UTC+8
   for (let i = 89; i >= 0; i--) {
@@ -80,8 +80,9 @@ function renderTimeline(daily) {
         `<div class="tip-row"><span class="tip-label">日期</span><span class="tip-value">${d}</span></div>` +
         `<div class="tip-row"><span class="tip-label">可用率</span><span class="tip-value" style="color:${b.fail ? "#de484a" : "#3bd672"}">${pct}%</span></div>` +
         `<div class="tip-row"><span class="tip-label">检测</span><span class="tip-value">正常 ${b.ok} · 异常 ${b.fail}</span></div>` +
-        ((b.events || []).map((e) => `<div class="tip-desc">${esc(e)}</div>`).join(""));
-      return `<i class="${b.fail ? "down" : "up"}" data-tip="${esc(tip)}"></i>`;
+        ((b.events || []).map((e) => `<div class="tip-desc">${esc(e)}</div>`).join("")) +
+        `<div class="tip-desc" style="color:#9ca3af">点击查看当日每次检测明细</div>`;
+      return `<i class="${b.fail ? "down" : "up"}" data-tip="${esc(tip)}" data-day="${d}" data-site="${esc(siteName)}"></i>`;
     })
     .join("");
   return `<div class="timeline">${bars}</div>`;
@@ -120,8 +121,9 @@ function renderSite(site) {
       <span class="badge" data-tip="${esc(infoTip)}">GET / 1m</span>
       ${statusText(lc)}
     </div>
-    ${renderTimeline(site.daily)}
+    ${renderTimeline(site.daily, site.name)}
     <div class="summary"><span>${esc(left)}</span><span>${right}</span></div>
+    <div class="day-detail" style="display:none"></div>
   </div>`;
 }
 
@@ -214,6 +216,27 @@ export function renderDashboard(data) {
   .timeline .no-data { color: #9aa2af; font-size: 13px; padding: 20px 0; text-align: center; width: 100%; }
   .summary { color: #9aa2af; display: flex; font-size: 13px; justify-content: space-between; line-height: 15px; }
 
+  /* ===== 当日检测明细（点击时间条展开） ===== */
+  .timeline i.active { outline: 2px solid #131a26; outline-offset: 1px; }
+  .day-detail { background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 10px; margin-top: 12px; overflow: hidden; }
+  .dd-head { align-items: baseline; border-bottom: 1px solid #e5e7eb; display: flex; font-size: 13px; gap: 10px; padding: 10px 14px; }
+  .dd-head b { font-family: SFMono-Regular, Consolas, monospace; }
+  .dd-head span { color: #6b7280; }
+  .dd-close { background: none; border: none; color: #9ca3af; cursor: pointer; font-size: 16px; margin-left: auto; padding: 0 4px; }
+  .dd-close:hover { color: #131a26; }
+  .dd-list { max-height: 320px; overflow-y: auto; }
+  .dd-row { align-items: baseline; border-top: 1px solid #eef0f2; display: flex; flex-wrap: wrap; font-size: 12px; gap: 12px; padding: 6px 14px; }
+  .dd-row:first-child { border-top: none; }
+  .dd-row.fail { background: #fef2f2; }
+  .dd-time { color: #6b7280; font-family: SFMono-Regular, Consolas, monospace; }
+  .dd-status { font-weight: 600; }
+  .dd-row.ok .dd-status { color: #3bd672; }
+  .dd-row.fail .dd-status { color: #de484a; }
+  .dd-meta { color: #9aa2af; font-family: SFMono-Regular, Consolas, monospace; }
+  .dd-event { color: #b45309; flex-basis: 100%; }
+  .dd-error { color: #dc2626; flex-basis: 100%; word-break: break-all; }
+  .dd-loading { color: #9aa2af; font-size: 13px; padding: 16px; text-align: center; }
+
   /* ===== 悬浮提示气泡（仿参考站 tippy 深色样式） ===== */
   #tip { background: rgba(17,24,39,.95); border-radius: 5px; box-shadow: 0 4px 14px rgba(0,0,0,.25); display: none; max-width: 280px; padding: 10px 12px; pointer-events: none; position: absolute; z-index: 999; }
   #tip:after { border: 5px solid transparent; border-top-color: rgba(17,24,39,.95); content: ""; left: 50%; position: absolute; top: 100%; transform: translateX(-50%); }
@@ -292,6 +315,95 @@ export function renderDashboard(data) {
       tip.style.display = "none";
     }
   });
+
+  // ===== 点击时间条查看当日检测明细 =====
+  // 面板每 30 秒自动刷新，用 sessionStorage 记住展开状态，刷新后自动恢复
+  var SS_KEY = "dd-open";
+
+  function escH(s) {
+    return String(s ?? "").replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+  function fmtHMS(ts) {
+    return new Date(ts + 8 * 3600e3).toISOString().slice(11, 19);
+  }
+  // 面板可能带 DASH_TOKEN 访问，API 请求需带上同样的 token
+  function apiUrl(path) {
+    var t = new URLSearchParams(location.search).get("token");
+    return t ? path + (path.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(t) : path;
+  }
+  function remember(bar) {
+    try {
+      if (bar) sessionStorage.setItem(SS_KEY, JSON.stringify({ site: bar.dataset.site, day: bar.dataset.day }));
+      else sessionStorage.removeItem(SS_KEY);
+    } catch (e) {}
+  }
+  function closeDetail(siteEl) {
+    var d = siteEl.querySelector(".day-detail");
+    d.style.display = "none";
+    var act = siteEl.querySelector(".timeline i.active");
+    if (act) act.classList.remove("active");
+    remember(null);
+  }
+  function renderRows(rows) {
+    if (!rows.length) return '<div class="dd-loading">当日无检测记录</div>';
+    var html = "";
+    for (var i = 0; i < rows.length; i++) {
+      var r = rows[i];
+      html += '<div class="dd-row ' + (r.ok ? "ok" : "fail") + '">' +
+        '<span class="dd-time">' + fmtHMS(r.ts) + "</span>" +
+        '<span class="dd-status">' + (r.ok ? "正常" : "异常") + "</span>" +
+        '<span class="dd-meta">' + (r.status || "-") + " · " + (r.latencyMs != null ? r.latencyMs + "ms" : "-") + "</span>" +
+        (r.event ? '<span class="dd-event">⚡ ' + escH(r.event) + "</span>" : "") +
+        (r.error ? '<span class="dd-error">' + escH(r.error) + "</span>" : "") +
+        "</div>";
+    }
+    return html;
+  }
+  function openDay(bar) {
+    var siteEl = bar.closest(".site");
+    var detail = siteEl.querySelector(".day-detail");
+    // 再点同一条 = 收起
+    if (bar.classList.contains("active")) { closeDetail(siteEl); return; }
+    var prev = siteEl.querySelector(".timeline i.active");
+    if (prev) prev.classList.remove("active");
+    bar.classList.add("active");
+    remember(bar);
+    detail.style.display = "";
+    detail.innerHTML = '<div class="dd-head"><b>' + bar.dataset.day + '</b><span>加载中…</span><button class="dd-close" type="button">×</button></div>';
+    fetch(apiUrl("/api/checks?site=" + encodeURIComponent(bar.dataset.site) + "&day=" + bar.dataset.day))
+      .then(function (r) { return r.json(); })
+      .then(function (rows) {
+        var ok = 0, fail = 0;
+        rows.forEach(function (r) { r.ok ? ok++ : fail++; });
+        detail.innerHTML =
+          '<div class="dd-head"><b>' + bar.dataset.day + '</b><span>共 ' + rows.length + " 次 · 正常 " + ok + " · 异常 " + fail + '</span><button class="dd-close" type="button">×</button></div>' +
+          '<div class="dd-list">' + renderRows(rows) + "</div>";
+      })
+      .catch(function () {
+        detail.innerHTML = '<div class="dd-head"><b>' + bar.dataset.day + '</b><span>加载失败，请重试</span><button class="dd-close" type="button">×</button></div>';
+      });
+  }
+  document.addEventListener("click", function (e) {
+    var t = e.target;
+    if (t && t.closest && t.closest(".dd-close")) { closeDetail(t.closest(".site")); return; }
+    var bar = t && t.closest ? t.closest(".timeline i[data-day]") : null;
+    if (bar) openDay(bar);
+  });
+  // 页面自动刷新后恢复之前展开的明细
+  try {
+    var saved = JSON.parse(sessionStorage.getItem(SS_KEY) || "null");
+    if (saved && saved.site && saved.day) {
+      var bars = document.querySelectorAll(".timeline i[data-day]");
+      for (var i = 0; i < bars.length; i++) {
+        if (bars[i].dataset.site === saved.site && bars[i].dataset.day === saved.day) {
+          openDay(bars[i]);
+          break;
+        }
+      }
+    }
+  } catch (e) {}
 })();
 </script>
 </body>
