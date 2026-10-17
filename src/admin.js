@@ -192,8 +192,8 @@ function showEnroll(data) {
 if (ENROLL) showEnroll(ENROLL);
 if (ENROLLED) document.getElementById("c").style.display = "";
 
-document.getElementById("f").addEventListener("submit", function(e) {
-  e.preventDefault();
+// 提交登录（密码 + 验证码）
+function submitLogin() {
   var t = document.getElementById("t").value;
   var c = document.getElementById("c").value.trim();
   if (!t) return;
@@ -204,17 +204,44 @@ document.getElementById("f").addEventListener("submit", function(e) {
     if (res.needTotp) document.getElementById("c").style.display = "";
     if (res.mode === "enroll") showEnroll(res);
   });
-});
+}
 
-document.getElementById("fe").addEventListener("submit", function(e) {
-  e.preventDefault();
+// 提交绑定（验证码）
+function submitEnroll() {
   var c = document.getElementById("ce").value.trim();
   if (!c) return;
   post(PATH + "/api/auth/enroll", { token: TOKEN, code: c }).then(function(res) {
     if (res.ok) { location.href = PATH; return; }
     showErr("ee", res.message || "验证失败");
   });
+}
+
+document.getElementById("f").addEventListener("submit", function(e) {
+  e.preventDefault();
+  submitLogin();
 });
+
+document.getElementById("fe").addEventListener("submit", function(e) {
+  e.preventDefault();
+  submitEnroll();
+});
+
+// 验证码输满 6 位自动提交；非数字字符自动剔除
+function autoSubmit(id, submitFn) {
+  var input = document.getElementById(id);
+  var lastSubmitted = "";
+  input.addEventListener("input", function() {
+    input.value = input.value.replace(/\D/g, "").slice(0, 6);
+    // 删除修改后允许再次提交同一个码
+    if (input.value.length < 6) lastSubmitted = "";
+    if (input.value.length === 6 && input.value !== lastSubmitted) {
+      lastSubmitted = input.value;
+      submitFn();
+    }
+  });
+}
+autoSubmit("c", submitLogin);
+autoSubmit("ce", submitEnroll);
 </script>
 </body></html>`;
 }
