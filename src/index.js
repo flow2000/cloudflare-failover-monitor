@@ -10,14 +10,16 @@ export default {
     const url = new URL(request.url);
 
     // 配置管理路由（独立鉴权，先于面板鉴权）
-    if (env.CONFIG_PATH && url.pathname.startsWith(env.CONFIG_PATH)) {
+    if (env.CONFIG_PATH) {
       const adminCfg = await resolveConfig(env);
-      const resp = await handleAdmin(request, env, adminCfg);
-      // 保存/删除配置后使面板缓存失效
-      if (url.pathname.endsWith("/api/config") && (request.method === "POST" || request.method === "DELETE")) {
-        memCache = { ts: 0, data: null };
+      if (adminCfg.configPath && url.pathname.startsWith(adminCfg.configPath)) {
+        const resp = await handleAdmin(request, env, adminCfg);
+        // 保存/删除配置后使面板缓存失效
+        if (url.pathname.endsWith("/api/config") && (request.method === "POST" || request.method === "DELETE")) {
+          memCache = { ts: 0, data: null };
+        }
+        return resp;
       }
-      return resp;
     }
 
     const cfg = await resolveConfig(env);

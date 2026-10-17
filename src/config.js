@@ -69,8 +69,9 @@ export function validateSites(sites) {
 // 异步解析生效配置：D1 中保存的 __config__ 优先于 wrangler.toml 的 SITES_CONFIG
 export async function resolveConfig(env) {
   const cfg = getConfig(env);
-  // 附加管理功能配置（不参与 D1 覆盖）
-  cfg.configPath = env.CONFIG_PATH || "";
+  // 附加管理功能配置（不参与 D1 覆盖）；CONFIG_PATH 容错：缺少前导斜杠时自动补上
+  const rawPath = env.CONFIG_PATH || "";
+  cfg.configPath = rawPath ? (rawPath.startsWith("/") ? rawPath : "/" + rawPath) : "";
   cfg.configToken = env.CONFIG_TOKEN || "";
   // D1 中保存的配置优先于 wrangler.toml
   try {

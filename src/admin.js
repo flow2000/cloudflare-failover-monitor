@@ -93,9 +93,8 @@ document.getElementById("f").addEventListener("submit", function(e) {
 }
 
 // 配置管理页（表单式编辑器）
-function renderAdminPage(env, sites, source) {
+function renderAdminPage(sites, source, path) {
   const sitesJson = esc(JSON.stringify(sites, null, 2));
-  const path = env.CONFIG_PATH;
   return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -422,7 +421,7 @@ render();
 // 统一处理 admin 路由（在 index.js 中被调用）
 export async function handleAdmin(request, env, cfg) {
   const url = new URL(request.url);
-  const path = env.CONFIG_PATH;
+  const path = cfg.configPath; // 已由 resolveConfig 归一化（确保以 / 开头）
   const sub = url.pathname.slice(path.length); // "" 或 "/api/config"
 
   // 1. 功能是否启用
@@ -478,7 +477,7 @@ export async function handleAdmin(request, env, cfg) {
   if (request.method === "GET" && (sub === "" || sub === "/")) {
     const row = await env.DB.prepare("SELECT json FROM state WHERE site = '__config__'").first();
     const source = row ? "d1" : "env";
-    return new Response(renderAdminPage(env, cfg.sites, source), {
+    return new Response(renderAdminPage(cfg.sites, source, path), {
       headers: { "Content-Type": "text/html; charset=utf-8" },
     });
   }
