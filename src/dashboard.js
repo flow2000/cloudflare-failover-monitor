@@ -396,9 +396,15 @@ export function renderDashboard(data) {
     if (!t || !t.closest) return;
     var siteEl = t.closest(".site");
     if (!siteEl) return;
-    var list = siteEl.querySelector(".day-detail .dd-list");
-    if (!list || !siteEl.querySelector(".day-detail").offsetParent) return; // 明细未展开
+    var detail = siteEl.querySelector(".day-detail");
+    if (!detail || !detail.offsetParent) return; // 明细未展开
+    var list = detail.querySelector(".dd-list");
+    if (!list || list.scrollHeight <= list.clientHeight) return; // 列表无需滚动
     if (t.closest(".dd-list")) return; // 已在列表上，原生滚动
+    // 列表在该方向还能滚动才拦截，滚到底/顶后放行页面滚动
+    var atTop = list.scrollTop <= 0;
+    var atBottom = list.scrollTop + list.clientHeight >= list.scrollHeight - 1;
+    if ((e.deltaY < 0 && atTop) || (e.deltaY > 0 && atBottom)) return;
     e.preventDefault();
     list.scrollTop += e.deltaY;
   }, { passive: false });
