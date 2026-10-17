@@ -1,13 +1,26 @@
-import { getConfig, siteFailOn } from "./config.js";
+import { resolveConfig, siteFailOn } from "./config.js";
 import { checkTarget, isFailure } from "./monitor.js";
 import { getCnameRecord, updateCname, normalizeTarget } from "./dns.js";
 import { renderDashboard } from "./dashboard.js";
+import { handleAdmin } from "./admin.js";
 
 export default {
-  // HTTP 入口：可视化面板 + JSON API + 手动触发检测
+  // HTTP 入口：可视化面板 + JSON API + 手动触发检测 + 配置管理
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
-    const cfg = getConfig(env);
+
+    // 配置管理路由（独立鉴权，先于面板鉴权）
+    if (env.CONFIG_PATH && url.pathname.startsWith(env.CONFIG_PATH)) {
+      const adminCfg = await resolveConfig(env);
+      const resp = await handleAdmin(request, env, adminCfg);
+      // 保存/删除配置后使面板缓存失效
+      if (url.pathname.endsWith("/api/config") && (request.method === "POST" || request.method === "DELETE")) {
+        memCache = { ts: 0, data: null };
+      }
+      return resp;
+    }
+
+    const cfg = await resolveConfig(env);
 
     // 可选的面板访问口令
     if (cfg.dashToken) {
@@ -34,7 +47,7 @@ export default {
 
   // Cron 入口：周期性检测
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(runChecks(env, getConfig(env)));
+    ctx.waitUntil(runChecks(env, await resolveConfig(env)));
   },
 };
 
@@ -69,7 +82,7 @@ async function loadData(db, cfg) {
 
   const states = {};
   for (const r of stateRes.results) {
-    if (r.site !== "__meta__") states[r.site] = JSON.parse(r.json);
+    if (r.site !== "__meta__" && r.site !== "__config__") states[r.site] = JSON.parse(r.json);
   }
   const daily = {};
   for (const r of dailyRes.results) {
@@ -119,7 +132,7 @@ async function runChecks(env, cfg) {
   const stateRes = await db.prepare("SELECT site, json FROM state").all();
   const states = {};
   for (const r of stateRes.results) {
-    if (r.site !== "__meta__") states[r.site] = JSON.parse(r.json);
+    if (r.site !== "__meta__" && r.site !== "__config__") states[r.site] = JSON.parse(r.json);
   }
   await Promise.all(
     cfg.sites.map((site) =>

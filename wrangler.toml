@@ -30,5 +30,12 @@ HISTORY_LIMIT = "50"
 # 建议改用 secret 注入：npx wrangler secret put DASH_TOKEN
 # DASH_TOKEN = ""
 
+# 可视化配置功能（可选）
+#   npx wrangler secret put CONFIG_PATH       # 自定义访问路径，如 /cfg-x7k2p9
+#   npx wrangler secret put CONFIG_TOKEN      # 强密码（≥12 位，含大小写+数字+符号）
+
 # 敏感配置请使用 secret 注入，切勿写入本文件：
 #   npx wrangler secret put CF_API_TOKEN
+#   npx wrangler secret put DASH_TOKEN
+#   npx wrangler secret put CONFIG_PATH
+#   npx wrangler secret put CONFIG_TOKEN

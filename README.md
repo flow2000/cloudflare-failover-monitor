@@ -110,6 +110,31 @@ npx wrangler secret put CF_API_TOKEN
 
 ### 第 4 步：告诉它监控哪些网站
 
+配置有两种方式：**网页可视化配置（推荐）** 和手写 wrangler.toml。
+
+#### 方式一：网页可视化配置（推荐）
+
+先设置访问路径和密码（两个 secret，一次就好）：
+
+```bash
+npx wrangler secret put CONFIG_PATH     # 自定义路径，如 /cfg-x7k2p9（不要用常见路径）
+npx wrangler secret put CONFIG_TOKEN    # 强密码（≥12 位，含大小写字母+数字+特殊符号）
+```
+
+> ⚠️ `CONFIG_TOKEN` 必须是**强密码**，否则配置功能**拒绝启用**。规则：长度 ≥ 12，同时包含小写字母、大写字母、数字、特殊符号。
+
+设置后**无需重新部署**，直接访问：
+
+```
+https://你的workers地址/你的CONFIG_PATH?token=你的CONFIG_TOKEN
+```
+
+页面提供表单式编辑器：增删站点、编辑字段、调整节点顺序（上下拖动）、保存立即生效。页面顶部会显示当前生效来源（`页面配置` = 来自 D1，`wrangler.toml` = 来自环境变量）。
+
+> 💡 保存的配置**优先于** wrangler.toml 中的 `SITES_CONFIG`。想回退？点「恢复为 wrangler.toml」即可。
+
+#### 方式二：手写 wrangler.toml（传统方式）
+
 配置写在 `wrangler.toml` 的 `[vars]` 下的 `SITES_CONFIG`。内容是一个 JSON 数组，每个网站一个对象。先看**格式化版本**，结构一目了然：
 
 ```json
@@ -200,7 +225,7 @@ npx wrangler secret put DASH_TOKEN
 
 ## 日常怎么用
 
-**加一个新站点**：改 `wrangler.toml` 里 `SITES_CONFIG`（JSON 数组里加一个对象）→ `npm run deploy` → 记得新域名要在第 3 步 Token 的授权范围内。
+**加一个新站点**：推荐用可视化配置页（设了 `CONFIG_PATH`/`CONFIG_TOKEN` 后直接访问）→ 表单里点「新增站点」→ 填完保存即可，无需重新部署。如果仍用 wrangler.toml：改 `SITES_CONFIG` → `npm run deploy` → 记得新域名要在第 3 步 Token 的授权范围内。
 
 **改阈值/超时**：改 `wrangler.toml` 的 `[vars]` → `npm run deploy`。
 
@@ -274,7 +299,17 @@ npm run tail
 面板数据有 25 秒缓存 + 每分钟才有一次新检测，「更新于」时间落后 1 分钟以内都正常。
 
 **Q：改完 wrangler.toml 没生效？**
-`[vars]` 的修改必须 `npm run deploy` 重新部署才生效；secret（CF_API_TOKEN、DASH_TOKEN）改完立即生效，不用重新部署。
+`[vars]` 的修改必须 `npm run deploy` 重新部署才生效；secret（CF_API_TOKEN、DASH_TOKEN、CONFIG_PATH、CONFIG_TOKEN）改完立即生效，不用重新部署。
+
+**Q：可视化配置页打不开？**
+按顺序查：
+1. 确认两个 secret 都设了：`npx wrangler secret put CONFIG_PATH` 和 `CONFIG_TOKEN`；
+2. `CONFIG_TOKEN` 必须是强密码（≥12 位，含大小写+数字+符号），否则页面会显示"功能未启用"；
+3. 确认访问路径完全正确（含 `?token=xxx`）；
+4. 浏览器控制台看有无 JS 报错。
+
+**Q：保存配置后 wrangler.toml 会同步吗？**
+不会。可视化配置保存在 D1 数据库里，**优先于** wrangler.toml 生效。点「导出单行 JSON」可复制当前配置，粘贴回 wrangler.toml 做备份。
 
 ## License
 
